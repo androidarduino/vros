@@ -117,5 +117,6 @@ void vfs_free_inode(struct inode *inode);
 struct dentry *vfs_alloc_dentry(const char *name, struct inode *inode);
 void vfs_free_dentry(struct dentry *dentry);
 struct superblock *vfs_get_root_sb(void);
+struct inode *vfs_lookup_inode(const char *path);
 
 #endif // VFS_H

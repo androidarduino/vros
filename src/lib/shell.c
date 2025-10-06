@@ -44,6 +44,9 @@ static int command_pos = 0;
 static int shell_row = 0;
 static int shell_col = 0;
 
+// Current working directory
+static char current_dir[256] = "/";
+
 // Helper function to compare strings
 static int strcmp(const char *s1, const char *s2)
 {
@@ -88,6 +91,130 @@ static int strlen(const char *s)
         len++;
     }
     return len;
+}
+
+// Normalize path (resolve relative paths, . and ..)
+static void normalize_path(const char *path, char *result)
+{
+    if (!path || !result)
+    {
+        result[0] = '/';
+        result[1] = '\0';
+        return;
+    }
+
+    char temp[256];
+    int is_absolute = (path[0] == '/');
+
+    // Start with current dir if relative path
+    if (!is_absolute)
+    {
+        strcpy(temp, current_dir);
+        if (temp[strlen(temp) - 1] != '/')
+        {
+            int len = strlen(temp);
+            if (len < 255)
+            {
+                temp[len] = '/';
+                temp[len + 1] = '\0';
+            }
+        }
+
+        // Append relative path
+        int temp_len = strlen(temp);
+        int i = 0;
+        while (path[i] && temp_len < 255)
+        {
+            temp[temp_len++] = path[i++];
+        }
+        temp[temp_len] = '\0';
+    }
+    else
+    {
+        int i = 0;
+        while (path[i] && i < 255)
+        {
+            temp[i] = path[i];
+            i++;
+        }
+        temp[i] = '\0';
+    }
+
+    // Parse and resolve . and ..
+    // Use static buffer instead of kmalloc to avoid memory issues
+    char segment_storage[32][64];
+    int segment_count = 0;
+
+    char buffer[256];
+    strcpy(buffer, temp);
+
+    char *token = buffer;
+    if (*token == '/')
+        token++;
+
+    while (*token)
+    {
+        char segment[64];
+        int seg_len = 0;
+
+        while (*token && *token != '/' && seg_len < 63)
+        {
+            segment[seg_len++] = *token++;
+        }
+        segment[seg_len] = '\0';
+
+        if (*token == '/')
+            token++;
+
+        if (segment[0] == '\0' || (segment[0] == '.' && segment[1] == '\0'))
+        {
+            // Skip empty and "."
+            continue;
+        }
+        else if (segment[0] == '.' && segment[1] == '.' && segment[2] == '\0')
+        {
+            // ".." - go up one level
+            if (segment_count > 0)
+                segment_count--;
+        }
+        else
+        {
+            // Regular segment
+            if (segment_count < 32)
+            {
+                strcpy(segment_storage[segment_count], segment);
+                segment_count++;
+            }
+        }
+    }
+
+    // Build result path
+    if (segment_count == 0)
+    {
+        strcpy(result, "/");
+    }
+    else
+    {
+        result[0] = '\0';
+        for (int i = 0; i < segment_count; i++)
+        {
+            int len = strlen(result);
+            if (len < 254)
+            {
+                result[len] = '/';
+                result[len + 1] = '\0';
+
+                // Copy segment safely
+                int j = 0;
+                while (segment_storage[i][j] && len + 1 + j < 255)
+                {
+                    result[len + 1 + j] = segment_storage[i][j];
+                    j++;
+                }
+                result[len + 1 + j] = '\0';
+            }
+        }
+    }
 }
 
 // Scroll screen up by one line
@@ -176,11 +303,83 @@ static void shell_print_prompt(void)
 }
 
 // Command: help
+// Command: cd - Change directory
+static void cmd_cd(const char *args)
+{
+    if (!args || args[0] == '\0')
+    {
+        // cd without arguments - go to root
+        current_dir[0] = '/';
+        current_dir[1] = '\0';
+        return;
+    }
+
+    // Normalize the path
+    char normalized[256];
+    normalize_path(args, normalized);
+
+    // Check if directory exists by trying to open it
+    extern struct inode *vfs_lookup_inode(const char *path);
+    struct inode *inode = vfs_lookup_inode(normalized);
+
+    if (!inode)
+    {
+        shell_print("\nError: Directory not found: ");
+        shell_print(normalized);
+        shell_print("\n");
+        return;
+    }
+
+    // Check if it's a directory
+    if (inode->type != VFS_DIRECTORY)
+    {
+        shell_print("\nError: Not a directory: ");
+        shell_print(normalized);
+        shell_print("\n");
+        return;
+    }
+
+    // Update current directory
+    strcpy(current_dir, normalized);
+}
+
+// Command: rm - Remove file
+static void cmd_rm(const char *args)
+{
+    if (!args || args[0] == '\0')
+    {
+        shell_print("\nUsage: rm <file>\n");
+        return;
+    }
+
+    // Normalize the path
+    char normalized[256];
+    normalize_path(args, normalized);
+
+    shell_print("\nRemoving file: ");
+    shell_print(normalized);
+    shell_print("\n");
+
+    // Call vfs_unlink
+    extern int vfs_unlink(const char *path);
+    int result = vfs_unlink(normalized);
+
+    if (result == 0)
+    {
+        shell_print("File removed successfully.\n");
+    }
+    else
+    {
+        shell_print("Error: Failed to remove file.\n");
+    }
+}
+
 static void cmd_help(void)
 {
     shell_print("\nAvailable commands:\n");
     shell_print("  help    - Show this help message\n");
     shell_print("  clear   - Clear the screen\n");
+    shell_print("  cd      - Change directory\n");
     shell_print("  echo    - Echo text to screen\n");
     shell_print("  about   - Show system information\n");
     shell_print("  mem     - Show memory information\n");
@@ -191,6 +390,7 @@ static void cmd_help(void)
     shell_print("  syscall - Test system calls\n");
     shell_print("  ls      - List files (usage: ls [path])\n");
     shell_print("  cat     - Display file contents\n");
+    shell_print("  rm      - Remove file (usage: rm <file>)\n");
     shell_print("  devtest - Test device files\n");
     shell_print("  usertest - Test user mode execution\n");
     shell_print("  forktest - Test fork() system call\n");
@@ -732,8 +932,9 @@ static void cmd_ls_dir(const char *path)
         // List entries
         struct ramfs_dirent *entry = (struct ramfs_dirent *)node->entries;
         int count = 0;
+        int max_entries = 1000; // Safety limit to prevent infinite loops
 
-        while (entry)
+        while (entry && count < max_entries)
         {
             shell_print("  ");
 
@@ -762,6 +963,11 @@ static void cmd_ls_dir(const char *path)
             shell_print("\n");
             entry = (struct ramfs_dirent *)entry->next;
             count++;
+        }
+
+        if (count >= max_entries)
+        {
+            shell_print("  Warning: Directory listing truncated (too many entries or loop detected)\n");
         }
 
         if (count == 0)
@@ -793,69 +999,31 @@ static void cmd_ls(const char *args)
 
         if (*args != '\0')
         {
-            // Build path
-            char path[256];
-            int i = 0;
-
-            // Add leading slash if not present
-            if (*args != '/')
-            {
-                path[0] = '/';
-                i = 1;
-            }
-
-            while (*args && *args != ' ' && i < 255)
-            {
-                path[i++] = *args++;
-            }
-            path[i] = '\0';
-
-            cmd_ls_dir(path);
+            // Normalize the path
+            char normalized[256];
+            normalize_path(args, normalized);
+            cmd_ls_dir(normalized);
             return;
         }
     }
 
-    // Default: list root
-    cmd_ls_dir("/");
+    // Default: list current directory
+    cmd_ls_dir(current_dir);
 }
 
 // Command: cat
 static void cmd_cat(const char *filename)
 {
-    // Build path
-    char path[256];
-    int i = 0;
-
-    // Check if path is absolute
-    if (filename[0] == '/')
-    {
-        // Use path as-is
-        while (filename[i] && i < 255)
-        {
-            path[i] = filename[i];
-            i++;
-        }
-        path[i] = '\0';
-    }
-    else
-    {
-        // Add leading slash
-        path[0] = '/';
-        i = 1;
-        int j = 0;
-        while (filename[j] && i < 255)
-        {
-            path[i++] = filename[j++];
-        }
-        path[i] = '\0';
-    }
+    // Normalize the path
+    char normalized[256];
+    normalize_path(filename, normalized);
 
     // Open file
-    struct file *f = vfs_open(path, 0);
+    struct file *f = vfs_open(normalized, 0);
     if (!f)
     {
         shell_print("\nError: Cannot open file '");
-        shell_print(filename);
+        shell_print(normalized);
         shell_print("'\n");
         return;
     }
@@ -1850,25 +2018,71 @@ static void cmd_touch(const char *args)
         return;
     }
 
-    // Check if path starts with /mnt/
-    if (args[0] != '/' || args[1] != 'm' || args[2] != 'n' ||
-        args[3] != 't' || args[4] != '/')
+    // Normalize the path
+    char normalized[256];
+    normalize_path(args, normalized);
+
+    // Parse parent directory and filename
+    char parent_path[256];
+    char filename[64];
+
+    // Find last '/'
+    int last_slash = -1;
+    for (int i = 0; normalized[i]; i++)
     {
-        shell_print("Error: Path must start with /mnt/\n");
+        if (normalized[i] == '/')
+            last_slash = i;
+    }
+
+    if (last_slash < 0)
+    {
+        shell_print("Error: Invalid path\n");
         return;
     }
 
-    // Extract filename after /mnt/
-    const char *filename = args + 5; // Skip "/mnt/"
+    // Extract parent path
+    if (last_slash == 0)
+    {
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    }
+    else
+    {
+        for (int i = 0; i < last_slash; i++)
+            parent_path[i] = normalized[i];
+        parent_path[last_slash] = '\0';
+    }
 
-    if (*filename == '\0')
+    // Extract filename
+    int fn_idx = 0;
+    for (int i = last_slash + 1; normalized[i] && fn_idx < 63; i++)
+        filename[fn_idx++] = normalized[i];
+    filename[fn_idx] = '\0';
+
+    if (filename[0] == '\0')
     {
         shell_print("Error: Invalid filename!\n");
         return;
     }
 
-    // Create the file in /mnt root
-    struct inode *new_inode = sb->root_inode->i_op->create(sb->root_inode, filename, 0644);
+    // Get parent directory inode
+    extern struct inode *vfs_lookup_inode(const char *path);
+    struct inode *parent = vfs_lookup_inode(parent_path);
+
+    if (!parent || parent->type != VFS_DIRECTORY)
+    {
+        shell_print("Error: Parent directory not found!\n");
+        return;
+    }
+
+    if (!parent->i_op || !parent->i_op->create)
+    {
+        shell_print("Error: Directory doesn't support file creation!\n");
+        return;
+    }
+
+    // Create the file
+    struct inode *new_inode = parent->i_op->create(parent, filename, 0644);
     if (!new_inode)
     {
         shell_print("Error: Failed to create file!\n");
@@ -1876,11 +2090,8 @@ static void cmd_touch(const char *args)
     }
 
     shell_print("Success! File created: ");
-    shell_print(filename);
+    shell_print(normalized);
     shell_print("\n");
-
-    // Note: In a real system, we'd need to keep track of this inode
-    // For now, just report success
 }
 
 // Command: write - Write text to a file
@@ -1926,29 +2137,75 @@ static void cmd_write(const char *args)
         filepath[i] = filename[i];
     filepath[i] = '\0';
 
-    // Check if path starts with /mnt/
-    if (filepath[0] != '/' || filepath[1] != 'm' || filepath[2] != 'n' ||
-        filepath[3] != 't' || filepath[4] != '/')
-    {
-        shell_print("\nError: Path must start with /mnt/\n");
-        return;
-    }
-
-    // Extract filename after /mnt/
-    const char *fn = filepath + 5; // Skip "/mnt/"
-
-    if (*fn == '\0')
-    {
-        shell_print("\nError: Invalid filename!\n");
-        return;
-    }
+    // Normalize the path
+    char normalized[256];
+    normalize_path(filepath, normalized);
 
     shell_print("\nWriting to file: ");
-    shell_print(fn);
+    shell_print(normalized);
     shell_print("\n");
 
-    // Create the file in /mnt root
-    struct inode *inode = sb->root_inode->i_op->create(sb->root_inode, fn, 0644);
+    // Parse parent directory and filename
+    char parent_path[256];
+    char fn[64];
+
+    // Find last '/'
+    int last_slash = -1;
+    for (int j = 0; normalized[j]; j++)
+    {
+        if (normalized[j] == '/')
+            last_slash = j;
+    }
+
+    if (last_slash < 0)
+    {
+        shell_print("Error: Invalid path\n");
+        return;
+    }
+
+    // Extract parent path
+    if (last_slash == 0)
+    {
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    }
+    else
+    {
+        for (int j = 0; j < last_slash; j++)
+            parent_path[j] = normalized[j];
+        parent_path[last_slash] = '\0';
+    }
+
+    // Extract filename
+    int fn_idx = 0;
+    for (int j = last_slash + 1; normalized[j] && fn_idx < 63; j++)
+        fn[fn_idx++] = normalized[j];
+    fn[fn_idx] = '\0';
+
+    if (fn[0] == '\0')
+    {
+        shell_print("Error: Invalid filename!\n");
+        return;
+    }
+
+    // Get parent directory inode
+    extern struct inode *vfs_lookup_inode(const char *path);
+    struct inode *parent = vfs_lookup_inode(parent_path);
+
+    if (!parent || parent->type != VFS_DIRECTORY)
+    {
+        shell_print("Error: Parent directory not found!\n");
+        return;
+    }
+
+    if (!parent->i_op || !parent->i_op->create)
+    {
+        shell_print("Error: Directory doesn't support file creation!\n");
+        return;
+    }
+
+    // Create the file
+    struct inode *inode = parent->i_op->create(parent, fn, 0644);
     if (!inode)
     {
         shell_print("Error: Failed to create file!\n");
@@ -1984,7 +2241,7 @@ static void cmd_write(const char *args)
     int_to_str(written, buffer);
     shell_print(buffer);
     shell_print(" bytes to ");
-    shell_print(fn);
+    shell_print(normalized);
     shell_print("\n");
 }
 
@@ -2048,6 +2305,14 @@ static void shell_execute_command(void)
     {
         shell_clear_screen();
     }
+    else if (strcmp(command_buffer, "cd") == 0)
+    {
+        cmd_cd(0);
+    }
+    else if (strncmp(command_buffer, "cd ", 3) == 0)
+    {
+        cmd_cd(command_buffer + 3);
+    }
     else if (strcmp(command_buffer, "about") == 0)
     {
         cmd_about();
@@ -2091,6 +2356,14 @@ static void shell_execute_command(void)
     else if (strcmp(command_buffer, "cat") == 0)
     {
         shell_print("\nUsage: cat <filename>\n");
+    }
+    else if (strcmp(command_buffer, "rm") == 0)
+    {
+        shell_print("\nUsage: rm <file>\n");
+    }
+    else if (strncmp(command_buffer, "rm ", 3) == 0)
+    {
+        cmd_rm(command_buffer + 3);
     }
     else if (strcmp(command_buffer, "devtest") == 0)
     {

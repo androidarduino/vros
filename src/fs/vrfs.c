@@ -357,7 +357,7 @@ static int vrfs_write(struct file *file, const char *buffer, uint32_t size, uint
 
 // Add directory entry to parent directory
 static int vrfs_add_dir_entry(struct vrfs_sb_info *sbi, struct vrfs_inode *dir_inode,
-                                  uint32_t dir_inode_no, const char *name, uint32_t inode_no)
+                              uint32_t dir_inode_no, const char *name, uint32_t inode_no)
 {
     // For simplicity: if directory has no data block, allocate one
     if (dir_inode->direct[0] == 0)
@@ -604,6 +604,90 @@ static struct inode *vrfs_lookup(struct inode *dir, const char *name)
     return 0; // Not found
 }
 
+// Unlink (delete) a file from directory
+static int vrfs_unlink(struct inode *dir, const char *name)
+{
+    if (!dir || !name || !dir->sb)
+        return -1;
+
+    struct vrfs_sb_info *sbi = (struct vrfs_sb_info *)dir->sb->private_data;
+    if (!sbi)
+        return -1;
+
+    struct vrfs_inode_info *dir_info = (struct vrfs_inode_info *)dir->private_data;
+    if (!dir_info)
+        return -1;
+
+    // Check if directory has any data blocks
+    if (dir_info->disk_inode.direct[0] == 0)
+        return -1; // Empty directory
+
+    // Read directory block
+    uint8_t *block_buf = (uint8_t *)kmalloc(VRFS_BLOCK_SIZE);
+    if (!block_buf)
+        return -1;
+
+    if (blkdev_read(sbi->bdev, dir_info->disk_inode.direct[0], block_buf) < 0)
+    {
+        kfree(block_buf);
+        return -1;
+    }
+
+    // Search for file entry
+    struct vrfs_dirent *entries = (struct vrfs_dirent *)block_buf;
+    int max_entries = VRFS_BLOCK_SIZE / sizeof(struct vrfs_dirent);
+    int found = -1;
+
+    for (int i = 0; i < max_entries; i++)
+    {
+        if (entries[i].inode == 0)
+            continue;
+
+        // Compare names
+        int match = 1;
+        for (int j = 0; j < VRFS_MAX_NAME; j++)
+        {
+            if (entries[i].name[j] != name[j])
+            {
+                match = 0;
+                break;
+            }
+            if (entries[i].name[j] == '\0')
+                break;
+        }
+
+        if (match)
+        {
+            found = i;
+            break;
+        }
+    }
+
+    if (found < 0)
+    {
+        kfree(block_buf);
+        return -1; // File not found
+    }
+
+    // Mark entry as unused
+    entries[found].inode = 0;
+    for (int j = 0; j < VRFS_MAX_NAME; j++)
+        entries[found].name[j] = '\0';
+
+    // Write back directory block
+    if (blkdev_write(sbi->bdev, dir_info->disk_inode.direct[0], block_buf) < 0)
+    {
+        kfree(block_buf);
+        return -1;
+    }
+
+    kfree(block_buf);
+
+    // TODO: Free the inode and its data blocks (for now, just leave them allocated)
+
+    return 0;
+}
+
 // Initialize operations structures
 static struct file_operations vrfs_fops = {
     .open = vrfs_open,
@@ -615,7 +699,7 @@ static struct file_operations vrfs_fops = {
 static struct inode_operations vrfs_iops = {
     .create = vrfs_create,
     .lookup = vrfs_lookup,
-    .unlink = 0,
+    .unlink = vrfs_unlink,
     .mkdir = 0,
     .rmdir = 0,
 };

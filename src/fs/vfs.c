@@ -188,7 +188,7 @@ struct dentry *vfs_lookup(const char *path)
 
 // Open a file
 // Helper: lookup inode by path (works with ramfs)
-static struct inode *vfs_lookup_inode(const char *path)
+struct inode *vfs_lookup_inode(const char *path)
 {
     if (!root_sb || !root_sb->root_inode)
         return 0;
@@ -427,8 +427,53 @@ struct inode *vfs_create(const char *path, uint32_t mode)
 // Delete a file
 int vfs_unlink(const char *path)
 {
-    (void)path;
-    // TODO: Implement file deletion
+    if (!path || !root_sb || !root_sb->root_inode)
+        return -1;
+
+    // Parse parent directory path and filename
+    char parent_path[256];
+    char filename[64];
+
+    // Find last '/'
+    int last_slash = -1;
+    for (int i = 0; path[i]; i++)
+    {
+        if (path[i] == '/')
+            last_slash = i;
+    }
+
+    if (last_slash < 0)
+        return -1; // Invalid path
+
+    // Extract parent path and filename
+    if (last_slash == 0)
+    {
+        parent_path[0] = '/';
+        parent_path[1] = '\0';
+    }
+    else
+    {
+        for (int i = 0; i < last_slash; i++)
+            parent_path[i] = path[i];
+        parent_path[last_slash] = '\0';
+    }
+
+    int fn_idx = 0;
+    for (int i = last_slash + 1; path[i] && fn_idx < 63; i++)
+        filename[fn_idx++] = path[i];
+    filename[fn_idx] = '\0';
+
+    // Look up parent directory
+    struct inode *parent_inode = vfs_lookup_inode(parent_path);
+    if (!parent_inode)
+        return -1;
+
+    // Call filesystem-specific unlink
+    if (parent_inode->i_op && parent_inode->i_op->unlink)
+    {
+        return parent_inode->i_op->unlink(parent_inode, filename);
+    }
+
     return -1;
 }
 
