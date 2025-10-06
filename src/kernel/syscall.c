@@ -2,6 +2,8 @@
 #include "idt.h"
 #include "task.h"
 #include "isr.h"
+#include "exec.h"
+#include "ipc.h"
 
 // External assembly syscall handler
 extern void syscall_asm_handler(void);
@@ -70,6 +72,60 @@ int sys_yield(void)
     return 0;
 }
 
+// Syscall: fork (needs register state)
+int sys_fork(struct registers *regs)
+{
+    return task_fork_with_regs(regs);
+}
+
+// Syscall: waitpid
+int sys_waitpid(int pid, int *status)
+{
+    return task_waitpid(pid, status);
+}
+
+// Syscall: IPC create port
+int sys_ipc_create_port(void)
+{
+    return ipc_create_port();
+}
+
+// Syscall: IPC create named port
+int sys_ipc_create_named_port(const char *name)
+{
+    return ipc_create_named_port(name);
+}
+
+// Syscall: IPC destroy port
+int sys_ipc_destroy_port(uint32_t port_id)
+{
+    return ipc_destroy_port(port_id);
+}
+
+// Syscall: IPC send
+int sys_ipc_send(uint32_t dest_port, uint32_t type, const void *data, uint32_t size)
+{
+    return ipc_send(dest_port, type, data, size);
+}
+
+// Syscall: IPC recv
+int sys_ipc_recv(uint32_t port_id, void *msg)
+{
+    return ipc_recv(port_id, (struct ipc_message *)msg);
+}
+
+// Syscall: IPC try recv (non-blocking)
+int sys_ipc_try_recv(uint32_t port_id, void *msg)
+{
+    return ipc_try_recv(port_id, (struct ipc_message *)msg);
+}
+
+// Syscall: IPC find port
+int sys_ipc_find_port(const char *name)
+{
+    return ipc_find_port(name);
+}
+
 // System call handler (called from ISR)
 void syscall_handler(struct registers *regs)
 {
@@ -80,6 +136,14 @@ void syscall_handler(struct registers *regs)
     if (syscall_num >= SYSCALL_MAX || !syscall_table[syscall_num])
     {
         regs->eax = -1; // Return error
+        return;
+    }
+
+    // Special handling for fork (needs register state)
+    if (syscall_num == SYS_FORK)
+    {
+        int ret = sys_fork(regs);
+        regs->eax = ret;
         return;
     }
 
@@ -106,6 +170,16 @@ void syscall_init(void)
     syscall_table[SYS_READ] = (syscall_handler_t)sys_read;
     syscall_table[SYS_GETPID] = (syscall_handler_t)sys_getpid;
     syscall_table[SYS_YIELD] = (syscall_handler_t)sys_yield;
+    syscall_table[SYS_FORK] = (syscall_handler_t)sys_fork;
+    syscall_table[SYS_WAITPID] = (syscall_handler_t)sys_waitpid;
+    syscall_table[SYS_EXECVE] = (syscall_handler_t)sys_execve;
+    syscall_table[SYS_IPC_CREATE_PORT] = (syscall_handler_t)sys_ipc_create_port;
+    syscall_table[SYS_IPC_CREATE_NAMED_PORT] = (syscall_handler_t)sys_ipc_create_named_port;
+    syscall_table[SYS_IPC_DESTROY_PORT] = (syscall_handler_t)sys_ipc_destroy_port;
+    syscall_table[SYS_IPC_SEND] = (syscall_handler_t)sys_ipc_send;
+    syscall_table[SYS_IPC_RECV] = (syscall_handler_t)sys_ipc_recv;
+    syscall_table[SYS_IPC_TRY_RECV] = (syscall_handler_t)sys_ipc_try_recv;
+    syscall_table[SYS_IPC_FIND_PORT] = (syscall_handler_t)sys_ipc_find_port;
 
     // Register INT 0x80 in IDT (0xEE = present, ring 3, 32-bit trap gate)
     idt_set_gate(0x80, (uint32_t)syscall_asm_handler, 0x08, 0xEE);

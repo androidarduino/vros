@@ -42,5 +42,8 @@ void paging_unmap_page(void *virt);
 void *paging_get_physical_address(void *virt);
 void paging_enable(void);
 page_directory *paging_get_kernel_directory(void);
+page_directory *paging_clone_directory(page_directory *src);
+void paging_free_directory(page_directory *dir);
+void paging_switch_directory(page_directory *dir);
 
 #endif // PAGING_H

@@ -11,10 +11,17 @@
 #include "kmalloc.h"
 #include "task.h"
 #include "syscall.h"
+#include "ipc.h"
 #include "vfs.h"
 #include "ramfs.h"
 #include "procfs.h"
 #include "devfs.h"
+#include "usermode.h"
+#include "exec.h"
+#include "ata.h"
+#include "blkdev.h"
+#include "simplefs.h"
+#include "mount.h"
 
 // VGA text mode buffer address
 volatile char *vga_buffer = (volatile char *)0xB8000;
@@ -114,6 +121,11 @@ void kernel_main(void)
     task_init();
     print_string("Multitasking enabled!", 17);
 
+    // Initialize IPC
+    print_string("Initializing IPC...", 18);
+    ipc_init();
+    print_string("IPC ready!", 19);
+
     // Initialize system calls
     print_string("Initializing system calls...", 18);
     syscall_init();
@@ -142,7 +154,65 @@ void kernel_main(void)
     devfs_mount();
     print_string("devfs mounted at /dev!", 25);
 
-    print_string("Starting shell...", 26);
+    // Initialize storage subsystem
+    print_string("Initializing storage...", 26);
+    blkdev_init();
+    mount_init();
+
+    print_string("Probing ATA devices...", 27);
+    ata_init();
+
+    // Register ATA devices as block devices
+    extern void ata_register_block_devices(void);
+    ata_register_block_devices();
+
+    simplefs_init();
+
+    // Auto-format disk on first boot
+    print_string("Preparing disk...", 28);
+    struct block_device *boot_disk = blkdev_get("hda");
+    if (boot_disk)
+    {
+        extern int simplefs_mkfs(struct block_device * bdev);
+        print_string("Formatting disk...", 29);
+        if (simplefs_mkfs(boot_disk) == 0)
+        {
+            print_string("Format OK!", 30);
+            print_string("Mounting disk to /mnt...", 31);
+            if (mount_fs("hda", "/mnt", "simplefs") == 0)
+            {
+                print_string("Disk ready at /mnt!", 32);
+            }
+            else
+            {
+                print_string("Mount failed!", 32);
+            }
+        }
+        else
+        {
+            print_string("Format failed!", 30);
+        }
+    }
+
+    print_string("Storage subsystem ready!", 33);
+
+    // Initialize usermode support
+    usermode_init();
+
+    // Create test programs and directories
+    print_string("Creating test programs...", 34);
+    extern void create_test_programs(void);
+    create_test_programs();
+
+    // Create some example directories
+    ramfs_create_dir("/bin", 0755);
+    ramfs_create_dir("/etc", 0755);
+    ramfs_create_dir("/tmp", 0777);
+    ramfs_create_dir("/mnt", 0755);
+
+    print_string("Test programs created!", 35);
+
+    print_string("Starting shell...", 36);
 
     // Wait a moment
     for (volatile int i = 0; i < 10000000; i++)

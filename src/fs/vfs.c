@@ -187,23 +187,75 @@ struct dentry *vfs_lookup(const char *path)
 }
 
 // Open a file
+// Helper: lookup inode by path (works with ramfs)
+static struct inode *vfs_lookup_inode(const char *path)
+{
+    if (!root_sb || !root_sb->root_inode)
+        return 0;
+
+    // Start from root
+    struct inode *current = root_sb->root_inode;
+
+    // Skip leading slash
+    if (*path == '/')
+        path++;
+
+    // If empty path, return root
+    if (*path == '\0')
+        return current;
+
+    // Parse path component by component
+    char component[VFS_NAME_MAX];
+    int comp_len;
+
+    while (*path)
+    {
+        // Extract component
+        comp_len = 0;
+        while (*path && *path != '/' && comp_len < VFS_NAME_MAX - 1)
+        {
+            component[comp_len++] = *path++;
+        }
+        component[comp_len] = '\0';
+
+        // Skip slash
+        if (*path == '/')
+            path++;
+
+        // Lookup component in current directory
+        if (current->i_op && current->i_op->lookup)
+        {
+            current = current->i_op->lookup(current, component);
+            if (!current)
+                return 0; // Component not found
+        }
+        else
+        {
+            return 0; // No lookup operation
+        }
+    }
+
+    return current;
+}
+
 struct file *vfs_open(const char *path, uint32_t flags)
 {
     (void)flags;
 
-    struct dentry *dentry = vfs_lookup(path);
-    if (!dentry)
+    // Use new inode lookup
+    struct inode *inode = vfs_lookup_inode(path);
+    if (!inode)
         return 0;
 
     struct file *file = (struct file *)kmalloc(sizeof(struct file));
     if (!file)
         return 0;
 
-    file->inode = dentry->inode;
+    file->inode = inode;
     file->flags = flags;
     file->pos = 0;
     file->ref_count = 1;
-    file->f_op = dentry->inode->f_op;
+    file->f_op = inode->f_op;
     file->private_data = 0;
 
     // Call open handler if available
@@ -317,27 +369,86 @@ int vfs_unlink(const char *path)
     return -1;
 }
 
-// Create a directory
-int vfs_mkdir(const char *path, uint32_t mode)
-{
-    (void)path;
-    (void)mode;
-    // TODO: Implement directory creation
-    return -1;
-}
-
-// Remove a directory
-int vfs_rmdir(const char *path)
-{
-    (void)path;
-    // TODO: Implement directory removal
-    return -1;
-}
-
 // Get root superblock
 struct superblock *vfs_get_root_sb(void)
 {
     return root_sb;
+}
+
+// Create directory
+int vfs_mkdir(const char *path, uint32_t mode)
+{
+    if (!path || !root_sb || !root_sb->root_inode)
+        return -1;
+
+    // Use filesystem-specific mkdir through ramfs
+    extern struct inode *ramfs_create_dir(const char *path, uint32_t mode);
+    struct inode *inode = ramfs_create_dir(path, mode);
+
+    return inode ? 0 : -1;
+}
+
+// Remove directory
+int vfs_rmdir(const char *path)
+{
+    if (!path || !root_sb || !root_sb->root_inode)
+        return -1;
+
+    // Skip leading slash
+    if (*path == '/')
+        path++;
+
+    if (*path == '\0')
+        return -1; // Can't remove root
+
+    // Find parent directory and directory name
+    char full_path[VFS_NAME_MAX];
+    char dirname[VFS_NAME_MAX];
+    int i = 0;
+    int last_slash = -1;
+
+    // Copy path and find last slash
+    while (*path && i < VFS_NAME_MAX - 1)
+    {
+        full_path[i] = *path;
+        if (*path == '/')
+            last_slash = i;
+        path++;
+        i++;
+    }
+    full_path[i] = '\0';
+
+    // Extract directory name
+    int name_start = (last_slash >= 0) ? (last_slash + 1) : 0;
+    int name_idx = 0;
+    for (int j = name_start; j < i; j++)
+    {
+        dirname[name_idx++] = full_path[j];
+    }
+    dirname[name_idx] = '\0';
+
+    // Get parent directory
+    struct inode *parent;
+    if (last_slash >= 0)
+    {
+        full_path[last_slash] = '\0'; // Truncate to get parent path
+        parent = vfs_lookup_inode(full_path[0] ? full_path : "/");
+    }
+    else
+    {
+        parent = root_sb->root_inode; // Parent is root
+    }
+
+    if (!parent || parent->type != VFS_DIRECTORY)
+        return -1;
+
+    // Call filesystem-specific rmdir
+    if (parent->i_op && parent->i_op->rmdir)
+    {
+        return parent->i_op->rmdir(parent, dirname);
+    }
+
+    return -1;
 }
 
 // Initialize VFS
