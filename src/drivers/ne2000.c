@@ -117,8 +117,8 @@ int ne2000_init(void)
     outb(ne2k.io_base + NE_RBCR0, 0);
     outb(ne2k.io_base + NE_RBCR1, 0);
 
-    // 配置接收 (接受广播)
-    outb(ne2k.io_base + NE_RCR, NE_RCR_AB);
+    // 配置接收 (promiscuous模式：接收所有数据包)
+    outb(ne2k.io_base + NE_RCR, NE_RCR_AB | NE_RCR_AM | NE_RCR_PRO);
 
     // 配置发送 (正常模式)
     outb(ne2k.io_base + NE_TCR, 0);
@@ -184,6 +184,10 @@ int ne2000_init(void)
 
     // 设置发送配置为正常模式
     outb(ne2k.io_base + NE_TCR, 0);
+
+    // 重新配置接收模式（在启动后设置）
+    // AB: Accept Broadcast, AM: Accept Multicast, PRO: Promiscuous
+    outb(ne2k.io_base + NE_RCR, NE_RCR_AB | NE_RCR_AM | NE_RCR_PRO);
 
     return 0;
 }

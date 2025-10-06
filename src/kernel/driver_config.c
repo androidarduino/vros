@@ -40,18 +40,54 @@ void driver_config_init(void)
     extern void print_string(const char *str, int row);
     extern uint32_t task_create(const char *name, void (*entry_point)(void));
 
-    print_string("Starting user-space drivers...", 38);
+    print_string("============================================", 30);
+    print_string("   STARTING USER-SPACE DRIVERS", 31);
+    print_string("============================================", 32);
 
     int started = 0;
+    char msg[64];
     for (int i = 0; i < driver_table_size; i++)
     {
         if (driver_table[i].enabled)
         {
+            // 显示正在启动的驱动
+            msg[0] = '[';
+            msg[1] = '0' + (i + 1);
+            msg[2] = ']';
+            msg[3] = ' ';
+            int j = 0;
+            while (driver_table[i].name[j] && j < 50)
+            {
+                msg[4 + j] = driver_table[i].name[j];
+                j++;
+            }
+            msg[4 + j] = '\0';
+            print_string(msg, 33 - i);
+
             // 创建驱动任务
             uint32_t pid = task_create(driver_table[i].name, driver_table[i].entry_point);
             if (pid > 0)
             {
                 started++;
+                msg[0] = ' ';
+                msg[1] = ' ';
+                msg[2] = ' ';
+                msg[3] = ' ';
+                msg[4] = 'P';
+                msg[5] = 'I';
+                msg[6] = 'D';
+                msg[7] = '=';
+                msg[8] = '0' + (pid / 10);
+                msg[9] = '0' + (pid % 10);
+                msg[10] = ' ';
+                msg[11] = 'O';
+                msg[12] = 'K';
+                msg[13] = '\0';
+                print_string(msg, 32 - i);
+            }
+            else
+            {
+                print_string("    FAILED!", 32 - i);
             }
         }
     }

@@ -298,6 +298,39 @@ static void shell_print(const char *str)
     update_cursor(shell_col, shell_row);
 }
 
+// Print raw string with length (for syscall write)
+void shell_print_raw(const char *str, int len)
+{
+    for (int i = 0; i < len; i++)
+    {
+        if (str[i] == '\n')
+        {
+            shell_col = 0;
+            shell_row++;
+            if (shell_row >= 25)
+            {
+                shell_scroll();
+            }
+        }
+        else if (str[i] != '\0') // Skip null bytes
+        {
+            print_char(str[i], shell_col, shell_row);
+            shell_col++;
+            if (shell_col >= 80)
+            {
+                shell_col = 0;
+                shell_row++;
+                if (shell_row >= 25)
+                {
+                    shell_scroll();
+                }
+            }
+        }
+    }
+    // Update cursor position
+    update_cursor(shell_col, shell_row);
+}
+
 // Print the shell prompt
 static void shell_print_prompt(void)
 {
@@ -412,6 +445,8 @@ static void cmd_help(void)
     shell_print("  blktest  - Test block device IPC\n");
     shell_print("  net2ktest    - Test network device IPC\n");
     shell_print("  netstacktest - Test network protocol stack\n");
+    shell_print("  arp      - Display ARP cache\n");
+    shell_print("  ping     - Send ICMP Echo Request (ping)\n");
     shell_print("  mkfs     - Format a disk with VRFS\n");
     shell_print("  mount    - Show mounted filesystems\n");
     shell_print("  mount <dev> <path> - Mount a disk\n");
@@ -1924,6 +1959,222 @@ static void cmd_netstacktest(void)
     shell_print("\n=== Test completed! ===\n\n");
 }
 
+// Command: arp - Display ARP cache
+static void cmd_arp(void)
+{
+    shell_print("\n=== ARP Cache ===\n\n");
+    shell_print("IP Address       MAC Address         \n");
+    shell_print("----------------------------------------\n");
+
+    // 通过 IPC 向 netstack 请求 ARP 缓存
+    extern int ipc_find_port(const char *name);
+    int netstack_port = ipc_find_port("net.stack");
+
+    if (netstack_port < 0)
+    {
+        shell_print("Error: netstack is not running\n\n");
+        return;
+    }
+
+    // TODO: 发送 ARP_LIST 请求给 netstack
+    // 目前 netstack 还不支持这个查询，显示提示信息
+    shell_print("(ARP cache query not yet implemented in netstack)\n");
+    shell_print("This will show IP-to-MAC address mappings learned from network traffic.\n\n");
+}
+
+// Command: ping - Send ICMP Echo Request
+static void cmd_ping(const char *ip_str)
+{
+    shell_print("\n=== Ping Test ===\n\n");
+
+    // 简单的 IP 地址解析（只支持 A.B.C.D 格式）
+    // 例如: "10.0.2.2"
+    shell_print("Target: ");
+    shell_print(ip_str);
+    shell_print("\n\n");
+
+    // 解析 IP 地址
+    uint32_t ip = 0;
+    const char *p = ip_str;
+    int part = 0;
+    int value = 0;
+
+    while (*p)
+    {
+        if (*p >= '0' && *p <= '9')
+        {
+            value = value * 10 + (*p - '0');
+        }
+        else if (*p == '.')
+        {
+            if (value > 255)
+            {
+                shell_print("Error: Invalid IP address (octet > 255)\n\n");
+                return;
+            }
+            ip |= (value << (part * 8));
+            value = 0;
+            part++;
+            if (part > 3)
+            {
+                shell_print("Error: Too many octets in IP address\n\n");
+                return;
+            }
+        }
+        else
+        {
+            shell_print("Error: Invalid character in IP address\n\n");
+            return;
+        }
+        p++;
+    }
+
+    // 添加最后一部分
+    if (value > 255)
+    {
+        shell_print("Error: Invalid IP address (octet > 255)\n\n");
+        return;
+    }
+    ip |= (value << (part * 8));
+
+    if (part != 3)
+    {
+        shell_print("Error: Incomplete IP address\n\n");
+        return;
+    }
+
+    // 显示解析后的 IP
+    shell_print("Parsed IP: ");
+    for (int i = 0; i < 4; i++)
+    {
+        char num[8];
+        int_to_str((ip >> (i * 8)) & 0xFF, num);
+        shell_print(num);
+        if (i < 3)
+            shell_print(".");
+    }
+    shell_print("\n\n");
+
+    // 查找 netstack
+    extern int ipc_find_port(const char *name);
+    int netstack_port = ipc_find_port("net.stack");
+
+    if (netstack_port < 0)
+    {
+        shell_print("[FAIL] Netstack is not running!\n\n");
+        return;
+    }
+
+    shell_print("Sending ICMP Echo Request...\n");
+
+    // 构造 ICMP Echo Request 数据包
+    // 这需要完整的以太网帧 + IP 头 + ICMP 头
+    uint8_t packet[98]; // 14 (eth) + 20 (IP) + 8 (ICMP) + 56 (data)
+
+    // 以太网头部（14字节）
+    // 目标 MAC: 52:55:0a:00:02:02 (QEMU user mode gateway MAC)
+    packet[0] = 0x52;
+    packet[1] = 0x55;
+    packet[2] = 0x0a;
+    packet[3] = 0x00;
+    packet[4] = 0x02;
+    packet[5] = 0x02;
+
+    // 源 MAC: 52:54:00:12:34:56
+    packet[6] = 0x52;
+    packet[7] = 0x54;
+    packet[8] = 0x00;
+    packet[9] = 0x12;
+    packet[10] = 0x34;
+    packet[11] = 0x56;
+
+    // EtherType: 0x0800 (IPv4)
+    packet[12] = 0x08;
+    packet[13] = 0x00;
+
+    // IP 头部（20字节）
+    packet[14] = 0x45; // Version 4, IHL 5
+    packet[15] = 0x00; // TOS
+    packet[16] = 0x00; // Total length (high)
+    packet[17] = 84;   // Total length (low) = 20 + 8 + 56
+    packet[18] = 0x00; // ID (high)
+    packet[19] = 0x01; // ID (low)
+    packet[20] = 0x00; // Flags + Fragment offset
+    packet[21] = 0x00;
+    packet[22] = 64;   // TTL
+    packet[23] = 1;    // Protocol (ICMP)
+    packet[24] = 0x00; // Checksum (high) - to be calculated
+    packet[25] = 0x00; // Checksum (low)
+
+    // 源 IP: 10.0.2.15
+    packet[26] = 10;
+    packet[27] = 0;
+    packet[28] = 2;
+    packet[29] = 15;
+
+    // 目标 IP
+    packet[30] = (ip >> 0) & 0xFF;
+    packet[31] = (ip >> 8) & 0xFF;
+    packet[32] = (ip >> 16) & 0xFF;
+    packet[33] = (ip >> 24) & 0xFF;
+
+    // 计算 IP 校验和（简化版）
+    uint32_t sum = 0;
+    for (int i = 14; i < 34; i += 2)
+    {
+        sum += (packet[i] << 8) | packet[i + 1];
+    }
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    uint16_t checksum = ~sum;
+    packet[24] = (checksum >> 8) & 0xFF;
+    packet[25] = checksum & 0xFF;
+
+    // ICMP 头部（8字节）
+    packet[34] = 8;    // Type: Echo Request
+    packet[35] = 0;    // Code
+    packet[36] = 0x00; // Checksum (high) - to be calculated
+    packet[37] = 0x00; // Checksum (low)
+    packet[38] = 0x00; // ID (high)
+    packet[39] = 0x01; // ID (low)
+    packet[40] = 0x00; // Sequence (high)
+    packet[41] = 0x01; // Sequence (low)
+
+    // ICMP 数据（56字节）
+    for (int i = 0; i < 56; i++)
+        packet[42 + i] = i;
+
+    // 计算 ICMP 校验和
+    sum = 0;
+    for (int i = 34; i < 98; i += 2)
+    {
+        sum += (packet[i] << 8) | packet[i + 1];
+    }
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    checksum = ~sum;
+    packet[36] = (checksum >> 8) & 0xFF;
+    packet[37] = checksum & 0xFF;
+
+    // 通过 IPC 发送给 netstack
+    extern int ipc_send(int dest_port, uint32_t type, const void *data, uint32_t size);
+    int result = ipc_send(netstack_port, 1, packet, 98);
+
+    if (result == 0)
+    {
+        shell_print("[OK] ICMP Echo Request sent\n");
+        shell_print("     Waiting for reply...\n");
+        shell_print("     (Reply handling not yet implemented)\n\n");
+        shell_print("Note: To see replies, netstack needs to:\n");
+        shell_print("1. Process incoming ICMP Echo Reply\n");
+        shell_print("2. Send notification back to this task\n\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to send ping request\n\n");
+    }
+}
+
 // Command: iotest - Test I/O port and IRQ bridge
 static void cmd_iotest(void)
 {
@@ -3084,6 +3335,18 @@ static void shell_execute_command(void)
     {
         cmd_netstacktest();
     }
+    else if (strcmp(command_buffer, "arp") == 0)
+    {
+        cmd_arp();
+    }
+    else if (strncmp(command_buffer, "ping ", 5) == 0)
+    {
+        cmd_ping(command_buffer + 5);
+    }
+    else if (strcmp(command_buffer, "ping") == 0)
+    {
+        shell_print("\nUsage: ping <ip_address>\nExample: ping 10.0.2.2\n");
+    }
     else if (strcmp(command_buffer, "lsblk") == 0)
     {
         cmd_lsblk();
@@ -3160,6 +3423,33 @@ void shell_init(void)
     command_pos = 0;
     shell_row = 0;
     shell_col = 0;
+
+    // 在清屏前显示提示并等待按键
+    extern void print_string(const char *str, int row);
+    extern int keyboard_buffer_empty(void);
+
+    // 先清空键盘缓冲区中可能残留的按键
+    extern char keyboard_getchar(void);
+    while (!keyboard_buffer_empty())
+    {
+        keyboard_getchar();
+    }
+
+    // 使用屏幕底部位置显示提示（VGA文本模式有25行，使用21-24行）
+    print_string("================================================", 21);
+    print_string("   PRESS ANY KEY TO START SHELL", 22);
+    print_string("   (Check boot messages above)", 23);
+    print_string("================================================", 24);
+
+    // 循环等待直到有新的按键
+    while (keyboard_buffer_empty())
+    {
+        // 空循环等待
+        __asm__ volatile("pause");
+    }
+
+    // 读取并丢弃按键
+    keyboard_getchar();
 
     shell_clear_screen();
     shell_print("Welcome to VROS Shell!\n");

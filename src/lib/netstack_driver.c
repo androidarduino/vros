@@ -12,8 +12,10 @@
 
 // 系统调用
 #define SYS_YIELD 4
-#define SYS_IPC_CREATE_NAMED_PORT 12
+#define SYS_IPC_SEND 10
 #define SYS_IPC_RECV 11
+#define SYS_IPC_CREATE_NAMED_PORT 12
+#define SYS_IPC_FIND_PORT 13
 #define SYS_IPC_TRY_RECV 14
 
 static inline void syscall_yield(void)
@@ -66,6 +68,8 @@ static inline int syscall_ipc_try_recv(uint32_t port, struct ipc_message_user *m
 // 网络字节序转换
 #define htons(x) ((uint16_t)((((x) & 0xFF) << 8) | (((x) >> 8) & 0xFF)))
 #define ntohs(x) htons(x)
+#define htonl(x) ((uint32_t)((((x) & 0xFF) << 24) | (((x) & 0xFF00) << 8) | (((x) & 0xFF0000) >> 8) | (((x) >> 24) & 0xFF)))
+#define ntohl(x) htonl(x)
 
 // MAC 地址
 typedef struct
@@ -188,17 +192,24 @@ static uint16_t ip_checksum(const void *data, uint32_t len)
 
 // ============= 协议处理 =============
 
+// 前置声明
+#define SYS_WRITE 1
+static void debug_print(const char *msg);
+static void send_frame_to_driver(const uint8_t *frame, uint32_t len);
+
 // 处理 ARP 包
 static void process_arp(const arp_packet_t *arp)
 {
     uint16_t opcode = ntohs(arp->opcode);
+    ip_addr_t sender_ip = ntohl(arp->sender_ip);
+    ip_addr_t target_ip = ntohl(arp->target_ip);
 
     // 更新 ARP 缓存
     for (int i = 0; i < ARP_CACHE_SIZE; i++)
     {
-        if (!arp_cache[i].valid || ip_equal(arp_cache[i].ip, arp->sender_ip))
+        if (!arp_cache[i].valid || ip_equal(arp_cache[i].ip, sender_ip))
         {
-            arp_cache[i].ip = arp->sender_ip;
+            arp_cache[i].ip = sender_ip;
             mac_copy(&arp_cache[i].mac, &arp->sender_mac);
             arp_cache[i].valid = 1;
             break;
@@ -206,39 +217,146 @@ static void process_arp(const arp_packet_t *arp)
     }
 
     // 如果是 ARP 请求且目标是我们，发送 ARP 回复
-    if (opcode == ARP_OP_REQUEST && ip_equal(arp->target_ip, my_ip))
+    if (opcode == ARP_OP_REQUEST && ip_equal(target_ip, my_ip))
     {
-        // 这里应该通过 IPC 发送 ARP 回复给 NE2000 驱动
-        // 由于需要实现完整的 IPC 通信，暂时留空
-        (void)opcode; // 避免警告
+        // 构造 ARP 响应帧
+        uint8_t reply_frame[42]; // 14 (eth) + 28 (ARP)
+
+        // 以太网头部
+        mac_copy((mac_addr_t *)&reply_frame[0], &arp->sender_mac); // 目标 MAC
+        mac_copy((mac_addr_t *)&reply_frame[6], &my_mac);          // 源 MAC
+        reply_frame[12] = 0x08;                                    // EtherType: ARP
+        reply_frame[13] = 0x06;
+
+        // ARP 包
+        arp_packet_t *reply = (arp_packet_t *)&reply_frame[14];
+        reply->hw_type = htons(1);         // Ethernet
+        reply->proto_type = htons(0x0800); // IPv4
+        reply->hw_addr_len = 6;
+        reply->proto_addr_len = 4;
+        reply->opcode = htons(ARP_OP_REPLY);            // ARP Reply
+        mac_copy(&reply->sender_mac, &my_mac);          // 我的 MAC
+        reply->sender_ip = htonl(my_ip);                // 我的 IP（转为网络字节序）
+        mac_copy(&reply->target_mac, &arp->sender_mac); // 请求者的 MAC
+        reply->target_ip = arp->sender_ip;              // 请求者的 IP（保持网络字节序）
+
+        // 发送给 NE2000 驱动
+        send_frame_to_driver(reply_frame, 42);
     }
 }
+
+// 系统调用前置声明
+static inline int syscall_ipc_send(int dest_port, uint32_t type, const void *data, uint32_t size);
+static inline int syscall_ipc_find_port(const char *name);
 
 // 处理 ICMP 包 (ping)
 static void process_icmp(const icmp_header_t *icmp, const uint8_t *data, uint32_t len, ip_addr_t src_ip)
 {
     (void)data;
     (void)len;
-    (void)src_ip;
 
-    // 验证校验和
-    uint8_t temp[512];
-    if (sizeof(icmp_header_t) + len > 512)
-        return;
-
-    // 如果是 ICMP Echo 请求，应该发送回复
-    if (icmp->type == ICMP_TYPE_ECHO_REQUEST)
+    // 如果是 ICMP Echo Reply（ping 回复）
+    if (icmp->type == ICMP_TYPE_ECHO_REPLY)
     {
-        // 这里应该通过 IPC 发送 ICMP 回复
-        // 暂时留空，展示架构
+        // TODO: 通知 ping 命令任务（需要维护一个等待列表）
+        // 目前不做处理
+    }
+    // 如果是 ICMP Echo 请求（从网络接收到的）
+    else if (icmp->type == ICMP_TYPE_ECHO_REQUEST)
+    {
+
+        // 从 ARP 缓存中查找源 IP 对应的 MAC 地址
+        mac_addr_t *src_mac = 0;
+        for (int i = 0; i < ARP_CACHE_SIZE; i++)
+        {
+            if (arp_cache[i].valid && ip_equal(arp_cache[i].ip, src_ip))
+            {
+                src_mac = &arp_cache[i].mac;
+                break;
+            }
+        }
+
+        if (!src_mac)
+            return;
+
+        // 计算完整数据包大小
+        uint32_t icmp_data_len = len;
+        uint32_t icmp_total_len = sizeof(icmp_header_t) + icmp_data_len;
+        uint32_t ip_total_len = sizeof(ip_header_t) + icmp_total_len;
+        uint32_t frame_len = sizeof(eth_header_t) + ip_total_len;
+
+        // 构造回复帧（最大1500字节）
+        uint8_t reply_frame[1500];
+        if (frame_len > 1500)
+            return;
+
+        // 以太网头部
+        eth_header_t *eth = (eth_header_t *)reply_frame;
+        mac_copy(&eth->dest, src_mac);  // 目标 MAC
+        mac_copy(&eth->src, &my_mac);   // 源 MAC
+        eth->type = htons(ETH_TYPE_IP); // EtherType: IPv4
+
+        // IP 头部
+        ip_header_t *ip_reply = (ip_header_t *)(reply_frame + sizeof(eth_header_t));
+        ip_reply->version_ihl = 0x45; // IPv4, 20字节头部
+        ip_reply->tos = 0;
+        ip_reply->total_length = htons(ip_total_len);
+        ip_reply->id = 0;
+        ip_reply->flags_fragment = 0;
+        ip_reply->ttl = 64;
+        ip_reply->protocol = IP_PROTO_ICMP;
+        ip_reply->checksum = 0;         // 稍后计算
+        ip_reply->src = htonl(my_ip);   // 我的 IP
+        ip_reply->dest = htonl(src_ip); // 目标 IP
+
+        // 计算 IP 校验和（暂时跳过，很多实现都接受校验和为0）
+        ip_reply->checksum = 0;
+
+        // ICMP 头部
+        icmp_header_t *icmp_reply = (icmp_header_t *)(reply_frame + sizeof(eth_header_t) + sizeof(ip_header_t));
+        icmp_reply->type = ICMP_TYPE_ECHO_REPLY; // Echo Reply
+        icmp_reply->code = 0;
+        icmp_reply->checksum = 0;              // 稍后计算
+        icmp_reply->id = icmp->id;             // 原样返回
+        icmp_reply->sequence = icmp->sequence; // 原样返回
+
+        // 复制 ICMP 数据（原样返回）
+        uint8_t *icmp_data_dst = reply_frame + sizeof(eth_header_t) + sizeof(ip_header_t) + sizeof(icmp_header_t);
+        for (uint32_t i = 0; i < icmp_data_len; i++)
+        {
+            icmp_data_dst[i] = data[i];
+        }
+
+        // 计算 ICMP 校验和
+        uint32_t sum = 0;
+        uint16_t *ptr = (uint16_t *)icmp_reply;
+        for (uint32_t i = 0; i < icmp_total_len / 2; i++)
+        {
+            sum += ntohs(ptr[i]);
+        }
+        if (icmp_total_len & 1)
+        {
+            sum += ((uint8_t *)icmp_reply)[icmp_total_len - 1] << 8;
+        }
+        while (sum >> 16)
+        {
+            sum = (sum & 0xFFFF) + (sum >> 16);
+        }
+        icmp_reply->checksum = htons(~sum);
+
+        // 发送回复
+        send_frame_to_driver(reply_frame, frame_len);
     }
 }
 
 // 处理 IP 包
 static void process_ip(const ip_header_t *ip, const uint8_t *payload, uint32_t payload_len)
 {
-    // 检查目标 IP 是否是我们
-    if (!ip_equal(ip->dest, my_ip))
+    // 检查目标 IP 是否是我们（注意字节序转换）
+    ip_addr_t dest_ip = ntohl(ip->dest);
+    ip_addr_t src_ip = ntohl(ip->src);
+
+    if (!ip_equal(dest_ip, my_ip))
         return;
 
     // 根据协议分发
@@ -249,7 +367,7 @@ static void process_ip(const ip_header_t *ip, const uint8_t *payload, uint32_t p
             process_icmp((const icmp_header_t *)payload,
                          payload + sizeof(icmp_header_t),
                          payload_len - sizeof(icmp_header_t),
-                         ip->src);
+                         src_ip);
         break;
     }
 }
@@ -275,61 +393,107 @@ static void process_ethernet_frame(const uint8_t *frame, uint32_t len)
 
     case ETH_TYPE_IP:
         if (payload_len >= sizeof(ip_header_t))
-            process_ip((const ip_header_t *)payload,
-                       payload + sizeof(ip_header_t),
-                       payload_len - sizeof(ip_header_t));
+        {
+            const ip_header_t *ip = (const ip_header_t *)payload;
+
+            // 检查是否是 ICMP Echo Request（来自本地 ping 命令）
+            if (ip->protocol == IP_PROTO_ICMP && payload_len >= sizeof(ip_header_t) + sizeof(icmp_header_t))
+            {
+                const icmp_header_t *icmp = (const icmp_header_t *)(payload + sizeof(ip_header_t));
+                if (icmp->type == ICMP_TYPE_ECHO_REQUEST)
+                {
+                    // 这是来自本地 ping 命令的请求，转发到网络
+                    send_frame_to_driver(frame, len);
+                    return; // 已处理，直接返回
+                }
+            }
+
+            // 处理接收到的 IP 数据包
+            process_ip(ip, payload + sizeof(ip_header_t), payload_len - sizeof(ip_header_t));
+        }
         break;
     }
 }
 
 // ============= 主循环 =============
 
-// 调试输出函数
-#define SYS_WRITE 1
+// 调试输出函数（实现）
 static void debug_print(const char *msg)
 {
     int len = 0;
-    while (msg[len]) len++;
+    while (msg[len])
+        len++;
     __asm__ volatile(
         "int $0x80"
         : : "a"(SYS_WRITE), "b"(1), "c"(msg), "d"(len));
 }
 
+// 系统调用：发送 IPC 消息（实现）
+static inline int syscall_ipc_send(int dest_port, uint32_t type, const void *data, uint32_t size)
+{
+    int ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(SYS_IPC_SEND), "b"(dest_port), "c"(type), "d"(data), "S"(size));
+    return ret;
+}
+
+// 系统调用：查找命名端口（实现）
+static inline int syscall_ipc_find_port(const char *name)
+{
+    int ret;
+    __asm__ volatile(
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(SYS_IPC_FIND_PORT), "b"(name));
+    return ret;
+}
+
+// 全局变量：NE2000 驱动端口（用于发送）
+static int ne2000_port = -1;
+
+// 发送以太网帧到 NE2000 驱动（实现）
+static void send_frame_to_driver(const uint8_t *frame, uint32_t len)
+{
+    if (ne2000_port < 0)
+    {
+        // 查找 NE2000 驱动端口
+        ne2000_port = syscall_ipc_find_port("netdev.ne2000");
+        if (ne2000_port < 0)
+            return;
+    }
+
+    // 通过 IPC 发送数据包给 NE2000 驱动
+    // 使用 type = 2 表示发送请求（NETDEV_OP_SEND_PACKET）
+    syscall_ipc_send(ne2000_port, 2, frame, len);
+}
+
 void netstack_driver_main(void)
 {
-    debug_print("[netstack] Starting...\n");
-    
     // 初始化 ARP 缓存
-    debug_print("[netstack] Initializing ARP cache...\n");
     for (int i = 0; i < ARP_CACHE_SIZE; i++)
         arp_cache[i].valid = 0;
 
-    debug_print("[netstack] Creating IPC port...\n");
     // 创建命名 IPC 端口（供应用程序连接）
     int port = syscall_ipc_create_named_port("net.stack");
-    
+
     if (port < 0)
     {
-        debug_print("[netstack] Port creation FAILED!\n");
         // 端口创建失败，让出 CPU
         while (1)
             syscall_yield();
     }
-    
-    debug_print("[netstack] Port created successfully\n");
-    debug_print("[netstack] Entering main loop\n");
 
     // 主循环：接收网络数据包和应用请求
     while (1)
     {
-        
         struct ipc_message_user msg;
 
         // 使用非阻塞接收，避免阻塞整个系统
         int recv_result = syscall_ipc_try_recv(port, &msg);
         if (recv_result == 0)
         {
-            debug_print("[netstack] Message received\n");
             // 判断消息类型
             if (msg.type == 1) // 网络数据包
             {

@@ -21,6 +21,7 @@
 // Function declarations
 void keyboard_init(void);
 void keyboard_handler(void);
+int keyboard_buffer_empty(void);
 char keyboard_getchar(void);
 void keyboard_enable_shell(void);
 

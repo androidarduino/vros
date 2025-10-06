@@ -36,13 +36,9 @@ int sys_write(int fd, const char *buf, int count)
 {
     (void)fd; // Ignore fd for now, always write to screen
 
-    // Find a free row to write (simple implementation)
-    static int write_row = 20;
-
-    for (int i = 0; i < count && buf[i] != '\0'; i++)
-    {
-        print_char(buf[i], i, write_row);
-    }
+    // Use shell's scrolling output mechanism
+    extern void shell_print_raw(const char *str, int len);
+    shell_print_raw(buf, count);
 
     return count;
 }

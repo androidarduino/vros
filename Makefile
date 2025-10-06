@@ -108,8 +108,17 @@ disk.img:
 	qemu-img create -f raw disk.img 16M
 
 # Run in QEMU with disk and network (specify raw format to allow block 0 writes)
+# Using legacy -net syntax with ICMP support
 run: $(KERNEL) disk.img
-	qemu-system-x86_64 -kernel $(KERNEL) -drive file=disk.img,format=raw,index=0,media=disk -netdev user,id=net0 -device ne2k_isa,netdev=net0,iobase=0x300,irq=11
+	qemu-system-x86_64 -kernel $(KERNEL) -drive file=disk.img,format=raw,index=0,media=disk -net nic,model=ne2k_isa -net user,restrict=no
+
+# Run with TAP network (real network interface, requires sudo ./setup-tap.sh first)
+run-tap: $(KERNEL) disk.img
+	@echo "================================================"
+	@echo "Starting QEMU with TAP network..."
+	@echo "Make sure you ran: sudo ./setup-tap.sh"
+	@echo "================================================"
+	sudo qemu-system-x86_64 -kernel $(KERNEL) -drive file=disk.img,format=raw,index=0,media=disk -net nic,model=ne2k_isa -net tap,ifname=tap0,script=no,downscript=no
 
 # Create a GRUB bootable ISO image
 image: $(KERNEL)

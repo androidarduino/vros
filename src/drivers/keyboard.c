@@ -117,6 +117,12 @@ void keyboard_handler(void)
     }
 }
 
+// Check if keyboard buffer is empty
+int keyboard_buffer_empty(void)
+{
+    return (buffer_read_pos == buffer_write_pos);
+}
+
 // Get a character from keyboard buffer
 char keyboard_getchar(void)
 {
