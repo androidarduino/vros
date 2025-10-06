@@ -20,7 +20,7 @@
 #include "exec.h"
 #include "ata.h"
 #include "blkdev.h"
-#include "simplefs.h"
+#include "vrfs.h"
 #include "mount.h"
 
 // VGA text mode buffer address
@@ -166,31 +166,43 @@ void kernel_main(void)
     extern void ata_register_block_devices(void);
     ata_register_block_devices();
 
-    simplefs_init();
+    vrfs_init();
 
-    // Auto-format disk on first boot
+    // Auto-mount disk (format only if necessary)
     print_string("Preparing disk...", 28);
     struct block_device *boot_disk = blkdev_get("hda");
     if (boot_disk)
     {
-        extern int simplefs_mkfs(struct block_device * bdev);
-        print_string("Formatting disk...", 29);
-        if (simplefs_mkfs(boot_disk) == 0)
+        // Try to mount existing filesystem first
+        print_string("Mounting disk to /mnt...", 29);
+        int mount_result = mount_fs("hda", "/mnt", "vrfs");
+
+        if (mount_result == 0)
         {
-            print_string("Format OK!", 30);
-            print_string("Mounting disk to /mnt...", 31);
-            if (mount_fs("hda", "/mnt", "simplefs") == 0)
-            {
-                print_string("Disk ready at /mnt!", 32);
-            }
-            else
-            {
-                print_string("Mount failed!", 32);
-            }
+            // Mount successful - disk has valid filesystem
+            print_string("Disk mounted at /mnt!", 30);
         }
         else
         {
-            print_string("Format failed!", 30);
+            // Mount failed - need to format
+            print_string("No filesystem found, formatting...", 30);
+            extern int vrfs_mkfs(struct block_device * bdev);
+            if (vrfs_mkfs(boot_disk) == 0)
+            {
+                print_string("Format OK, mounting...", 31);
+                if (mount_fs("hda", "/mnt", "vrfs") == 0)
+                {
+                    print_string("Disk ready at /mnt!", 32);
+                }
+                else
+                {
+                    print_string("Mount failed!", 32);
+                }
+            }
+            else
+            {
+                print_string("Format failed!", 31);
+            }
         }
     }
 

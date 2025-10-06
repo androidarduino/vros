@@ -200,29 +200,92 @@ static struct inode *vfs_lookup_inode(const char *path)
     if (*path == '/')
         path++;
 
+    // Skip trailing slashes
+    const char *path_end = path;
+    while (*path_end)
+        path_end++;
+    while (path_end > path && *(path_end - 1) == '/')
+        path_end--;
+
     // If empty path, return root
-    if (*path == '\0')
+    if (*path == '\0' || path == path_end)
         return current;
 
     // Parse path component by component
     char component[VFS_NAME_MAX];
     int comp_len;
+    char current_path[256];
+    int path_pos = 0;
+    current_path[0] = '/';
+    current_path[1] = '\0';
+    path_pos = 1;
 
-    while (*path)
+    while (path < path_end && *path)
     {
         // Extract component
         comp_len = 0;
-        while (*path && *path != '/' && comp_len < VFS_NAME_MAX - 1)
+        while (path < path_end && *path && *path != '/' && comp_len < VFS_NAME_MAX - 1)
         {
             component[comp_len++] = *path++;
         }
         component[comp_len] = '\0';
 
+        // Skip if empty component (double slashes)
+        if (comp_len == 0)
+        {
+            if (*path == '/')
+                path++;
+            continue;
+        }
+
+        // Build current path for mount check
+        if (path_pos < 255)
+        {
+            for (int i = 0; i < comp_len && path_pos < 255; i++)
+                current_path[path_pos++] = component[i];
+            current_path[path_pos] = '\0';
+        }
+
         // Skip slash
         if (*path == '/')
+        {
             path++;
+            if (path_pos < 255)
+            {
+                current_path[path_pos++] = '/';
+                current_path[path_pos] = '\0';
+            }
+        }
 
-        // Lookup component in current directory
+        // Check if current path is a mount point
+        extern struct superblock *mount_get_sb(const char *path);
+
+        // Remove trailing slash for mount check
+        char mount_check_path[256];
+        int mcp = 0;
+        for (int i = 0; current_path[i] && i < 255; i++)
+        {
+            mount_check_path[mcp++] = current_path[i];
+        }
+        if (mcp > 1 && mount_check_path[mcp - 1] == '/')
+            mcp--;
+        mount_check_path[mcp] = '\0';
+
+        struct superblock *mounted_sb = mount_get_sb(mount_check_path);
+        if (mounted_sb && mounted_sb->root_inode)
+        {
+            // This is a mount point! Switch to mounted filesystem
+            current = mounted_sb->root_inode;
+
+            // If there's more path, continue from mounted fs root
+            if (*path == '\0')
+                return current;
+
+            // Continue with remaining path
+            continue;
+        }
+
+        // Normal lookup in current directory
         if (current->i_op && current->i_op->lookup)
         {
             current = current->i_op->lookup(current, component);

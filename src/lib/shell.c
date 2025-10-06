@@ -8,7 +8,7 @@
 #include "usermode.h"
 #include "ata.h"
 #include "blkdev.h"
-#include "simplefs.h"
+#include "vrfs.h"
 #include "mount.h"
 #include <stdint.h>
 
@@ -204,7 +204,7 @@ static void cmd_help(void)
     shell_print("  ipcinfo  - Show IPC statistics and ports\n");
     shell_print("  drvtest  - Test user-space driver (microkernel demo)\n");
     shell_print("  drvstop  - Stop driver test\n");
-    shell_print("  mkfs     - Format a disk with SimpleFS\n");
+    shell_print("  mkfs     - Format a disk with VRFS\n");
     shell_print("  mount    - Show mounted filesystems\n");
     shell_print("  mount <dev> <path> - Mount a disk\n");
     shell_print("  umount   - Unmount a filesystem\n");
@@ -606,60 +606,176 @@ static void cmd_ls_dir(const char *path)
         void *next;
     };
 
-    struct ramfs_node *node = (struct ramfs_node *)f->inode->private_data;
-    if (!node)
+    // Check if this is a VRFS directory (mounted filesystem)
+    extern struct superblock *mount_get_sb(const char *path);
+
+    // Normalize path: remove trailing slashes for mount check
+    char normalized_path[256];
+    int np = 0;
+    for (int i = 0; path[i] && np < 255; i++)
+        normalized_path[np++] = path[i];
+    // Remove trailing slashes
+    while (np > 1 && normalized_path[np - 1] == '/')
+        np--;
+    normalized_path[np] = '\0';
+
+    struct superblock *mounted_sb = mount_get_sb(normalized_path);
+
+    if (mounted_sb)
     {
-        shell_print("  Error: Invalid directory\n");
-        vfs_close(f);
-        return;
-    }
+        // This is a mounted VRFS
 
-    // List entries
-    struct ramfs_dirent *entry = (struct ramfs_dirent *)node->entries;
-    int count = 0;
-
-    while (entry)
-    {
-        shell_print("  ");
-
-        // Show type indicator
-        if (entry->inode && entry->inode->type == VFS_DIRECTORY)
+        // VRFS directory entry structure
+        struct vrfs_dirent
         {
-            shell_print("[DIR]  ");
+            uint32_t inode;
+            char name[28];
+        };
+
+        // Use the correct vrfs_inode_info from vrfs.h
+        struct vrfs_inode_info *dir_info = (struct vrfs_inode_info *)f->inode->private_data;
+        if (!dir_info)
+        {
+            shell_print("  Error: No directory info\n");
+            vfs_close(f);
+            return;
+        }
+
+        // Get VRFS sb_info to read fresh inode from disk (use definition from vrfs.h)
+        struct vrfs_sb_info *sbi = (struct vrfs_sb_info *)mounted_sb->private_data;
+        if (sbi)
+        {
+            // Read fresh inode data from disk to ensure consistency
+            extern int vrfs_read_inode(struct vrfs_sb_info * sbi, uint32_t inode_no, void *inode_data);
+            vrfs_read_inode(sbi, dir_info->inode_no, &dir_info->disk_inode);
+        }
+
+        // Check if directory has data block
+        if (dir_info->disk_inode.direct[0] == 0)
+        {
+            shell_print("  (empty - no data block)\n");
+            vfs_close(f);
+            return;
+        }
+
+        // Read directory block
+        uint8_t *block_buf = (uint8_t *)kmalloc(512);
+        if (!block_buf)
+        {
+            shell_print("  Error: Memory allocation failed\n");
+            vfs_close(f);
+            return;
+        }
+
+        // Get block device
+        extern struct block_device *blkdev_get(const char *name);
+        struct block_device *bdev = blkdev_get("hda");
+        if (!bdev)
+        {
+            shell_print("  Error: Cannot access disk\n");
+            kfree(block_buf);
+            vfs_close(f);
+            return;
+        }
+
+        // Read directory data block
+        if (blkdev_read(bdev, dir_info->disk_inode.direct[0], block_buf) < 0)
+        {
+            shell_print("  Error: Cannot read directory\n");
+            kfree(block_buf);
+            vfs_close(f);
+            return;
+        }
+
+        // List entries
+        struct vrfs_dirent *entries = (struct vrfs_dirent *)block_buf;
+        int max_entries = 512 / sizeof(struct vrfs_dirent);
+        int count = 0;
+
+        for (int i = 0; i < max_entries; i++)
+        {
+            if (entries[i].inode == 0)
+                continue;
+
+            shell_print("  [FILE] ");
+            shell_print(entries[i].name);
+            shell_print("\n");
+            count++;
+        }
+
+        kfree(block_buf);
+
+        if (count == 0)
+        {
+            shell_print("  (empty)\n");
         }
         else
         {
-            shell_print("[FILE] ");
+            shell_print("\nTotal: ");
+            char count_str[16];
+            int_to_str(count, count_str);
+            shell_print(count_str);
+            shell_print(" item(s)\n");
         }
-
-        shell_print(entry->name);
-
-        // Show file size for files only
-        if (entry->inode && entry->inode->type != VFS_DIRECTORY)
-        {
-            shell_print(" (");
-            char size_str[16];
-            int_to_str(entry->inode->size, size_str);
-            shell_print(size_str);
-            shell_print(" bytes)");
-        }
-
-        shell_print("\n");
-        entry = (struct ramfs_dirent *)entry->next;
-        count++;
-    }
-
-    if (count == 0)
-    {
-        shell_print("  (empty)\n");
     }
     else
     {
-        shell_print("\nTotal: ");
-        char count_str[16];
-        int_to_str(count, count_str);
-        shell_print(count_str);
-        shell_print(" item(s)\n");
+        // This is a ramfs directory
+        struct ramfs_node *node = (struct ramfs_node *)f->inode->private_data;
+        if (!node)
+        {
+            shell_print("  Error: Invalid directory\n");
+            vfs_close(f);
+            return;
+        }
+
+        // List entries
+        struct ramfs_dirent *entry = (struct ramfs_dirent *)node->entries;
+        int count = 0;
+
+        while (entry)
+        {
+            shell_print("  ");
+
+            // Show type indicator
+            if (entry->inode && entry->inode->type == VFS_DIRECTORY)
+            {
+                shell_print("[DIR]  ");
+            }
+            else
+            {
+                shell_print("[FILE] ");
+            }
+
+            shell_print(entry->name);
+
+            // Show file size for files only
+            if (entry->inode && entry->inode->type != VFS_DIRECTORY)
+            {
+                shell_print(" (");
+                char size_str[16];
+                int_to_str(entry->inode->size, size_str);
+                shell_print(size_str);
+                shell_print(" bytes)");
+            }
+
+            shell_print("\n");
+            entry = (struct ramfs_dirent *)entry->next;
+            count++;
+        }
+
+        if (count == 0)
+        {
+            shell_print("  (empty)\n");
+        }
+        else
+        {
+            shell_print("\nTotal: ");
+            char count_str[16];
+            int_to_str(count, count_str);
+            shell_print(count_str);
+            shell_print(" item(s)\n");
+        }
     }
 
     vfs_close(f);
@@ -1441,7 +1557,7 @@ static void cmd_mkfs(const char *args)
 
     shell_print("\nFormatting ");
     shell_print(args);
-    shell_print(" with SimpleFS...\n");
+    shell_print(" with VRFS...\n");
 
     // Get block device
     struct block_device *bdev = blkdev_get(args);
@@ -1455,7 +1571,7 @@ static void cmd_mkfs(const char *args)
     // Format the device
     shell_print("Formatting disk...\n");
 
-    int mkfs_result = simplefs_mkfs(bdev);
+    int mkfs_result = vrfs_mkfs(bdev);
 
     if (mkfs_result != 0)
     {
@@ -1507,7 +1623,7 @@ static void cmd_mkfs(const char *args)
     }
 
     uint32_t *magic = (uint32_t *)test_buf;
-    if (*magic == 0x53465301)
+    if (*magic == VRFS_MAGIC)
         shell_print("Verification: OK!\n");
     else
         shell_print("Verification: FAILED!\n");
@@ -1567,13 +1683,13 @@ static void cmd_mount(const char *args)
     if (test_bdev)
     {
         shell_print("Device found, testing read...\n");
-        extern struct superblock *simplefs_mount(struct block_device * bdev);
-        struct superblock *test_sb = simplefs_mount(test_bdev);
+        extern struct superblock *vrfs_mount(struct block_device * bdev);
+        struct superblock *test_sb = vrfs_mount(test_bdev);
         if (test_sb)
         {
             shell_print("Superblock read OK!\n");
-            extern int simplefs_unmount(struct superblock * sb);
-            simplefs_unmount(test_sb);
+            extern int vrfs_unmount(struct superblock * sb);
+            vrfs_unmount(test_sb);
         }
         else
         {
@@ -1586,7 +1702,7 @@ static void cmd_mount(const char *args)
     // Mount using the mount system
     extern int mount_fs(const char *device, const char *path, const char *fstype);
 
-    int result = mount_fs(dev_name, mount_point, "simplefs");
+    int result = mount_fs(dev_name, mount_point, "vrfs");
     if (result == -2)
     {
         shell_print("Error: Already mounted! Use 'umount' first.\n");
@@ -1658,9 +1774,9 @@ static void cmd_mount_show(void)
                 shell_print(" ");
 
             // Print filesystem type
-            if (mount_table[i].sb && mount_table[i].sb->magic == SIMPLEFS_MAGIC)
+            if (mount_table[i].sb && mount_table[i].sb->magic == VRFS_MAGIC)
             {
-                shell_print("simplefs\n");
+                shell_print("vrfs\n");
             }
             else
             {

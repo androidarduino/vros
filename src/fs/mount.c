@@ -1,6 +1,6 @@
 #include "mount.h"
 #include "blkdev.h"
-#include "simplefs.h"
+#include "vrfs.h"
 #include "kmalloc.h"
 #include <stdint.h>
 
@@ -71,9 +71,9 @@ int mount_fs(const char *device, const char *path, const char *fstype)
     // Mount filesystem based on type
     struct superblock *sb = 0;
 
-    if (strcmp(fstype, "simplefs") == 0)
+    if (strcmp(fstype, "vrfs") == 0)
     {
-        sb = simplefs_mount(bdev);
+        sb = vrfs_mount(bdev);
     }
     else
     {
@@ -103,7 +103,7 @@ int unmount_fs(const char *path)
             // Unmount
             if (mount_table[i].sb)
             {
-                simplefs_unmount(mount_table[i].sb);
+                vrfs_unmount(mount_table[i].sb);
             }
 
             mount_table[i].in_use = 0;

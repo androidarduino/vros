@@ -46,7 +46,7 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(FS_DIR)/procfs.c \
           $(FS_DIR)/devfs.c \
           $(FS_DIR)/exec.c \
-          $(FS_DIR)/simplefs.c \
+          $(FS_DIR)/vrfs.c \
           $(FS_DIR)/mount.c \
           $(DRIVERS_DIR)/keyboard.c \
           $(DRIVERS_DIR)/ata.c \
