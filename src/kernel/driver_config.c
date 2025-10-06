@@ -3,6 +3,7 @@
 // 驱动入口函数声明
 extern void ata_driver_main(void);
 extern void ne2000_driver_main(void);
+extern void netstack_driver_main(void);
 // 未来可以添加更多驱动...
 
 // 驱动配置表
@@ -11,12 +12,16 @@ extern void ne2000_driver_main(void);
 struct driver_config driver_table[] = {
     {.name = "ata_driver",
      .entry_point = ata_driver_main,
-     .enabled = 1, // 修改这里可以启用/禁用驱动
+     .enabled = 1,
      .description = "ATA/IDE disk driver (user-space)"},
     {.name = "ne2000_driver",
      .entry_point = ne2000_driver_main,
-     .enabled = 1, // 修改这里可以启用/禁用驱动
+     .enabled = 1,
      .description = "NE2000 network driver (user-space)"},
+    {.name = "netstack",
+     .entry_point = netstack_driver_main,
+     .enabled = 1,
+     .description = "Network protocol stack (user-space)"},
     // 添加新驱动示例（已禁用）：
     // {
     //     .name = "usb_driver",

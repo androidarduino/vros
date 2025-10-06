@@ -270,6 +270,7 @@ void kernel_main(void)
     print_string("Test programs created!", 37);
 
     // Start user-space drivers (based on driver_config.c)
+    // 包括：ATA驱动、NE2000驱动、网络协议栈等
     extern void driver_config_init(void);
     driver_config_init();
 

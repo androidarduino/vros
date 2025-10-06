@@ -59,6 +59,7 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(DRIVERS_DIR)/netif.c \
           $(DRIVERS_DIR)/blkdev_ipc_client.c \
           $(DRIVERS_DIR)/netdev_ipc_client.c \
+          $(LIB_DIR)/netstack_driver.c \
           $(LIB_DIR)/shell.c \
           $(LIB_DIR)/usermode.c \
           $(LIB_DIR)/user_prog.c \
