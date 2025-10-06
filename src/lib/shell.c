@@ -10,6 +10,8 @@
 #include "blkdev.h"
 #include "vrfs.h"
 #include "mount.h"
+#include "ne2000.h"
+#include "netif.h"
 #include <stdint.h>
 
 // External functions
@@ -412,6 +414,8 @@ static void cmd_help(void)
     shell_print("  atatest  - Test ATA read/write\n");
     shell_print("  touch    - Create an empty file\n");
     shell_print("  write    - Write text to a file\n");
+    shell_print("  ifconfig - Show network interfaces\n");
+    shell_print("  nettest  - Test network packet send/receive\n");
 }
 
 // Command: about
@@ -1713,6 +1717,198 @@ static void cmd_atatest(const char *args)
     kfree(read_buf);
 }
 
+// Command: ifconfig - Show network interfaces
+static void cmd_ifconfig(const char *args)
+{
+    (void)args;
+
+    shell_print("\n=== Network Interfaces ===\n");
+
+    // Get network interface
+    extern struct netif *netif_get(const char *name);
+    struct netif *netif = netif_get("eth0");
+
+    if (!netif)
+    {
+        shell_print("No network interfaces found.\n");
+        return;
+    }
+
+    shell_print("Interface: ");
+    shell_print(netif->name);
+    shell_print("\n");
+
+    // Print MAC address
+    shell_print("  MAC Address: ");
+    const char *hex = "0123456789ABCDEF";
+    char mac_str[3];
+    for (int i = 0; i < 6; i++)
+    {
+        mac_str[0] = hex[(netif->mac_addr[i] >> 4) & 0xF];
+        mac_str[1] = hex[netif->mac_addr[i] & 0xF];
+        mac_str[2] = '\0';
+        shell_print(mac_str);
+        if (i < 5)
+            shell_print(":");
+    }
+    shell_print("\n");
+
+    // Print statistics
+    shell_print("  TX packets: ");
+    char num[32];
+    int_to_str(netif->stats.packets_sent, num);
+    shell_print(num);
+    shell_print("  bytes: ");
+    int_to_str(netif->stats.bytes_sent, num);
+    shell_print(num);
+    shell_print("\n");
+
+    shell_print("  RX packets: ");
+    int_to_str(netif->stats.packets_received, num);
+    shell_print(num);
+    shell_print("  bytes: ");
+    int_to_str(netif->stats.bytes_received, num);
+    shell_print(num);
+    shell_print("\n");
+
+    shell_print("  Errors: ");
+    int_to_str(netif->stats.errors, num);
+    shell_print(num);
+    shell_print("\n");
+}
+
+// Command: nettest - Test network send/receive
+static void cmd_nettest(const char *args)
+{
+    (void)args;
+
+    shell_print("\n=== Network Packet Test ===\n");
+
+    // Get network interface
+    extern struct netif *netif_get(const char *name);
+    extern int netif_send(struct netif * netif, const uint8_t * data, uint16_t length);
+    extern int netif_receive(struct netif * netif, uint8_t * buffer, uint16_t max_length);
+
+    struct netif *netif = netif_get("eth0");
+    if (!netif)
+    {
+        shell_print("ERROR: eth0 not found!\n");
+        return;
+    }
+
+    shell_print("Found eth0, creating test packet...\n");
+
+    // Create a test Ethernet frame (broadcast ARP request)
+    uint8_t packet[60]; // Minimum Ethernet frame size
+
+    // Destination MAC (broadcast)
+    for (int i = 0; i < 6; i++)
+        packet[i] = 0xFF;
+
+    // Source MAC (from our interface)
+    for (int i = 0; i < 6; i++)
+        packet[6 + i] = netif->mac_addr[i];
+
+    // EtherType (ARP = 0x0806)
+    packet[12] = 0x08;
+    packet[13] = 0x06;
+
+    // ARP Header
+    packet[14] = 0x00;
+    packet[15] = 0x01; // Hardware type: Ethernet
+    packet[16] = 0x08;
+    packet[17] = 0x00; // Protocol type: IPv4
+    packet[18] = 0x06; // Hardware size
+    packet[19] = 0x04; // Protocol size
+    packet[20] = 0x00;
+    packet[21] = 0x01; // Opcode: Request
+
+    // Sender MAC
+    for (int i = 0; i < 6; i++)
+        packet[22 + i] = netif->mac_addr[i];
+
+    // Sender IP (192.168.1.100)
+    packet[28] = 192;
+    packet[29] = 168;
+    packet[30] = 1;
+    packet[31] = 100;
+
+    // Target MAC (zeros for request)
+    for (int i = 0; i < 6; i++)
+        packet[32 + i] = 0x00;
+
+    // Target IP (192.168.1.1)
+    packet[38] = 192;
+    packet[39] = 168;
+    packet[40] = 1;
+    packet[41] = 1;
+
+    // Pad to minimum size
+    for (int i = 42; i < 60; i++)
+        packet[i] = 0x00;
+
+    shell_print("Sending ARP request...\n");
+
+    if (netif_send(netif, packet, 60) == 0)
+    {
+        shell_print("Packet sent successfully!\n");
+    }
+    else
+    {
+        shell_print("ERROR: Failed to send packet!\n");
+        return;
+    }
+
+    // Try to receive a response (non-blocking)
+    shell_print("Checking for incoming packets...\n");
+
+    uint8_t recv_buf[1518]; // Maximum Ethernet frame
+    int count = 0;
+
+    for (int i = 0; i < 5; i++)
+    {
+        int len = netif_receive(netif, recv_buf, 1518);
+        if (len > 0)
+        {
+            count++;
+            shell_print("Received packet: ");
+            char num[16];
+            int_to_str(len, num);
+            shell_print(num);
+            shell_print(" bytes\n");
+
+            // Print first 32 bytes in hex
+            shell_print("  First 32 bytes:\n  ");
+            const char *hex = "0123456789ABCDEF";
+            char byte_str[4];
+            byte_str[2] = ' ';
+            byte_str[3] = '\0';
+
+            for (int j = 0; j < 32 && j < len; j++)
+            {
+                byte_str[0] = hex[(recv_buf[j] >> 4) & 0xF];
+                byte_str[1] = hex[recv_buf[j] & 0xF];
+                shell_print(byte_str);
+
+                if ((j + 1) % 16 == 0 && j < 31 && j < len - 1)
+                    shell_print("\n  ");
+            }
+            shell_print("\n");
+        }
+
+        // Small delay between checks
+        for (volatile int j = 0; j < 1000000; j++)
+            ;
+    }
+
+    if (count == 0)
+    {
+        shell_print("No packets received (this is normal if no ARP replies)\n");
+    }
+
+    shell_print("\nTest complete!\n");
+}
+
 // Command: mkfs - Format a disk
 static void cmd_mkfs(const char *args)
 {
@@ -2440,6 +2636,14 @@ static void shell_execute_command(void)
     else if (strcmp(command_buffer, "atatest") == 0)
     {
         cmd_atatest(0);
+    }
+    else if (strcmp(command_buffer, "ifconfig") == 0)
+    {
+        cmd_ifconfig(0);
+    }
+    else if (strcmp(command_buffer, "nettest") == 0)
+    {
+        cmd_nettest(0);
     }
     else if (strncmp(command_buffer, "mkfs ", 5) == 0)
     {

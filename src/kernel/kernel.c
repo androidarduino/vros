@@ -22,6 +22,8 @@
 #include "blkdev.h"
 #include "vrfs.h"
 #include "mount.h"
+#include "ne2000.h"
+#include "netif.h"
 
 // VGA text mode buffer address
 volatile char *vga_buffer = (volatile char *)0xB8000;
@@ -208,11 +210,28 @@ void kernel_main(void)
 
     print_string("Storage subsystem ready!", 33);
 
+    // Initialize network subsystem
+    print_string("Initializing network...", 34);
+    netif_init();
+
+    // Initialize NE2000 network card
+    if (ne2000_init() == 0)
+    {
+        // Register NE2000 as network interface
+        extern struct netif_ops ne2000_ops;
+        netif_register("eth0", &ne2000_ops, 0);
+        print_string("NE2000 network card ready!", 35);
+    }
+    else
+    {
+        print_string("NE2000 not found", 35);
+    }
+
     // Initialize usermode support
     usermode_init();
 
     // Create test programs and directories
-    print_string("Creating test programs...", 34);
+    print_string("Creating test programs...", 36);
     extern void create_test_programs(void);
     create_test_programs();
 
@@ -222,9 +241,9 @@ void kernel_main(void)
     ramfs_create_dir("/tmp", 0777);
     ramfs_create_dir("/mnt", 0755);
 
-    print_string("Test programs created!", 35);
+    print_string("Test programs created!", 37);
 
-    print_string("Starting shell...", 36);
+    print_string("Starting shell...", 38);
 
     // Wait a moment
     for (volatile int i = 0; i < 10000000; i++)

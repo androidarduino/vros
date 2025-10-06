@@ -52,6 +52,8 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(DRIVERS_DIR)/ata.c \
           $(DRIVERS_DIR)/blkdev.c \
           $(DRIVERS_DIR)/ata_blk.c \
+          $(DRIVERS_DIR)/ne2000.c \
+          $(DRIVERS_DIR)/netif.c \
           $(LIB_DIR)/shell.c \
           $(LIB_DIR)/usermode.c \
           $(LIB_DIR)/user_prog.c \
@@ -96,9 +98,9 @@ clean:
 disk.img:
 	qemu-img create -f raw disk.img 16M
 
-# Run in QEMU with disk (specify raw format to allow block 0 writes)
+# Run in QEMU with disk and network (specify raw format to allow block 0 writes)
 run: $(KERNEL) disk.img
-	qemu-system-x86_64 -kernel $(KERNEL) -drive file=disk.img,format=raw,index=0,media=disk
+	qemu-system-x86_64 -kernel $(KERNEL) -drive file=disk.img,format=raw,index=0,media=disk -netdev user,id=net0 -device ne2k_isa,netdev=net0,iobase=0x300,irq=11
 
 # Create a GRUB bootable ISO image
 image: $(KERNEL)
