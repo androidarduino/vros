@@ -61,6 +61,7 @@ void task_init(void)
     current_task->child = 0;
     current_task->sibling = 0;
     current_task->exit_code = 0;
+    current_task->iopb = NULL; // Initialize I/O permission bitmap
 
     // IMPORTANT: Idle task must be in the queue!
     current_task->next = current_task; // Points to itself
@@ -121,6 +122,7 @@ uint32_t task_create(const char *name, void (*entry_point)(void))
     new_task->child = 0;
     new_task->sibling = 0;
     new_task->exit_code = 0;
+    new_task->iopb = NULL; // Initialize I/O permission bitmap
 
     // Add to tasks array
     for (int i = 1; i < MAX_TASKS; i++)
@@ -144,6 +146,12 @@ uint32_t task_create(const char *name, void (*entry_point)(void))
 struct task *task_get_current(void)
 {
     return current_task;
+}
+
+// Alias for compatibility
+struct task *get_current_task(void)
+{
+    return task_get_current();
 }
 
 // Simplified scheduler

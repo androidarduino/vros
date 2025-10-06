@@ -406,6 +406,11 @@ static void cmd_help(void)
     shell_print("  ipcinfo  - Show IPC statistics and ports\n");
     shell_print("  drvtest  - Test user-space driver (microkernel demo)\n");
     shell_print("  drvstop  - Stop driver test\n");
+    shell_print("  iotest   - Test I/O port permissions and IRQ bridge\n");
+    shell_print("  atadrv   - Start user-space ATA driver\n");
+    shell_print("  netdrv   - Start user-space NE2000 driver\n");
+    shell_print("  blktest  - Test block device IPC\n");
+    shell_print("  net2ktest - Test network device IPC\n");
     shell_print("  mkfs     - Format a disk with VRFS\n");
     shell_print("  mount    - Show mounted filesystems\n");
     shell_print("  mount <dev> <path> - Mount a disk\n");
@@ -1570,6 +1575,343 @@ static void cmd_drvstop(void)
     shell_print("Driver test stopped!\n");
 }
 
+// Command: blktest - Test block device IPC
+static void cmd_blktest(void)
+{
+    shell_print("\n=== Block Device IPC Test ===\n\n");
+
+    extern int blkdev_ipc_driver_available(void);
+    extern int blkdev_ipc_read(uint8_t drive, uint32_t lba, uint32_t count, void *buffer);
+    extern int blkdev_ipc_write(uint8_t drive, uint32_t lba, uint32_t count, const void *buffer);
+    extern int blkdev_ipc_client_init(void);
+
+    // 检查驱动是否可用
+    shell_print("Checking if driver is available...\n");
+    if (!blkdev_ipc_driver_available())
+    {
+        shell_print("[FAIL] ATA driver is not running!\n");
+        shell_print("Run 'atadrv' first to start the driver.\n\n");
+        return;
+    }
+    shell_print("[OK] Driver is available\n\n");
+
+    // 分配测试缓冲区
+    extern void *kmalloc(uint32_t size);
+    extern void kfree(void *ptr);
+
+    uint8_t *buffer = (uint8_t *)kmalloc(512);
+    if (!buffer)
+    {
+        shell_print("[FAIL] Failed to allocate buffer\n\n");
+        return;
+    }
+
+    // 测试 1: 读取扇区 0
+    shell_print("Test 1: Reading sector 0 via IPC...\n");
+    int result = blkdev_ipc_read(0, 0, 1, buffer);
+    if (result > 0)
+    {
+        shell_print("[OK] Read ");
+        char num[16];
+        int_to_str(result, num);
+        shell_print(num);
+        shell_print(" bytes\n");
+
+        // 显示前 16 个字节
+        shell_print("First 16 bytes: ");
+        for (int i = 0; i < 16; i++)
+        {
+            char hex[4];
+            uint8_t b = buffer[i];
+            hex[0] = "0123456789ABCDEF"[b >> 4];
+            hex[1] = "0123456789ABCDEF"[b & 0xF];
+            hex[2] = ' ';
+            hex[3] = '\0';
+            shell_print(hex);
+        }
+        shell_print("\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Read failed\n");
+    }
+
+    // 测试 2: 写入测试
+    shell_print("\nTest 2: Write/Read test...\n");
+    // 准备测试数据
+    for (int i = 0; i < 512; i++)
+    {
+        buffer[i] = (uint8_t)(i & 0xFF);
+    }
+
+    // 写入到扇区 1
+    result = blkdev_ipc_write(0, 1, 1, buffer);
+    if (result > 0)
+    {
+        shell_print("[OK] Written ");
+        char num[16];
+        int_to_str(result, num);
+        shell_print(num);
+        shell_print(" bytes\n");
+
+        // 清空缓冲区
+        for (int i = 0; i < 512; i++)
+            buffer[i] = 0;
+
+        // 读回
+        result = blkdev_ipc_read(0, 1, 1, buffer);
+        if (result > 0)
+        {
+            shell_print("[OK] Read back ");
+            int_to_str(result, num);
+            shell_print(num);
+            shell_print(" bytes\n");
+
+            // 验证数据
+            int errors = 0;
+            for (int i = 0; i < 512; i++)
+            {
+                if (buffer[i] != (uint8_t)(i & 0xFF))
+                    errors++;
+            }
+
+            if (errors == 0)
+            {
+                shell_print("[OK] Data verification passed!\n");
+            }
+            else
+            {
+                shell_print("[FAIL] Data verification failed (");
+                int_to_str(errors, num);
+                shell_print(num);
+                shell_print(" errors)\n");
+            }
+        }
+        else
+        {
+            shell_print("[FAIL] Read back failed\n");
+        }
+    }
+    else
+    {
+        shell_print("[FAIL] Write failed\n");
+    }
+
+    kfree(buffer);
+
+    shell_print("\n=== Test completed! ===\n\n");
+}
+
+// Command: atadrv - Start user-space ATA driver
+static void cmd_atadrv(void)
+{
+    shell_print("\n=== Starting User-Space ATA Driver ===\n\n");
+
+    extern void ata_driver_main(void);
+    extern uint32_t task_create(const char *name, void (*entry_point)(void));
+
+    uint32_t drv_pid = task_create("ata_driver", ata_driver_main);
+    if (drv_pid > 0)
+    {
+        shell_print("[OK] ATA driver task created (PID: ");
+        char pid_str[16];
+        int_to_str(drv_pid, pid_str);
+        shell_print(pid_str);
+        shell_print(")\n");
+        shell_print("Use 'ps' to check driver status.\n\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to create driver task\n\n");
+    }
+}
+
+// Command: netdrv - Start NE2000 driver
+static void cmd_netdrv(void)
+{
+    shell_print("\n=== Starting User-Space NE2000 Driver ===\n\n");
+
+    extern void ne2000_driver_main(void);
+    extern uint32_t task_create(const char *name, void (*entry_point)(void));
+
+    uint32_t drv_pid = task_create("ne2000_driver", ne2000_driver_main);
+    if (drv_pid > 0)
+    {
+        shell_print("[OK] NE2000 driver task created (PID: ");
+        char pid_str[16];
+        int_to_str(drv_pid, pid_str);
+        shell_print(pid_str);
+        shell_print(")\n");
+        shell_print("Use 'ps' to check driver status.\n\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to create driver task\n\n");
+    }
+}
+
+// Command: net2ktest - Test NE2000 IPC
+static void cmd_net2ktest(void)
+{
+    shell_print("\n=== Network Device IPC Test ===\n\n");
+
+    extern int netdev_ipc_driver_available(void);
+    extern int netdev_ipc_get_mac(uint8_t *mac);
+    extern int netdev_ipc_send(const uint8_t *data, uint32_t length);
+
+    // 检查驱动是否可用
+    shell_print("Checking if driver is available...\n");
+    
+    extern int ipc_find_port(const char *name);
+    int port_id = ipc_find_port("netdev.ne2000");
+    
+    shell_print("Debug: ipc_find_port returned: ");
+    char port_str[16];
+    int_to_str(port_id, port_str);
+    shell_print(port_str);
+    shell_print("\n");
+    
+    if (!netdev_ipc_driver_available())
+    {
+        shell_print("[FAIL] NE2000 driver is not running!\n");
+        shell_print("Run 'netdrv' first to start the driver.\n\n");
+        return;
+    }
+    shell_print("[OK] Driver is available\n\n");
+
+    // 获取 MAC 地址
+    shell_print("Getting MAC address...\n");
+    uint8_t mac[6];
+    if (netdev_ipc_get_mac(mac) == 0)
+    {
+        shell_print("[OK] MAC: ");
+        for (int i = 0; i < 6; i++)
+        {
+            char hex[4];
+            uint8_t b = mac[i];
+            hex[0] = "0123456789ABCDEF"[b >> 4];
+            hex[1] = "0123456789ABCDEF"[b & 0xF];
+            hex[2] = (i < 5) ? ':' : '\0';
+            hex[3] = '\0';
+            shell_print(hex);
+        }
+        shell_print("\n\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to get MAC address\n\n");
+    }
+
+    // 测试发送（发送一个简单的以太网帧）
+    shell_print("Test: Sending packet...\n");
+    uint8_t test_packet[60];
+    // 目标 MAC: FF:FF:FF:FF:FF:FF (广播)
+    for (int i = 0; i < 6; i++)
+        test_packet[i] = 0xFF;
+    // 源 MAC: 使用获取的 MAC
+    for (int i = 0; i < 6; i++)
+        test_packet[6 + i] = mac[i];
+    // EtherType: 0x0800 (IP)
+    test_packet[12] = 0x08;
+    test_packet[13] = 0x00;
+    // 填充数据
+    for (int i = 14; i < 60; i++)
+        test_packet[i] = i;
+
+    int result = netdev_ipc_send(test_packet, 60);
+    if (result > 0)
+    {
+        shell_print("[OK] Sent ");
+        char num[16];
+        int_to_str(result, num);
+        shell_print(num);
+        shell_print(" bytes\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Send failed\n");
+    }
+
+    shell_print("\n=== Test completed! ===\n\n");
+}
+
+// Command: iotest - Test I/O port and IRQ bridge
+static void cmd_iotest(void)
+{
+    shell_print("\n=== Microkernel I/O & IRQ Test Suite ===\n");
+
+    // 测试 1: I/O 权限系统（内核级测试）
+    shell_print("\n=== Test 1: I/O Permission System ===\n");
+
+    extern int ioport_grant_access(uint16_t port_start, uint16_t port_end);
+    extern int ioport_check_access(uint16_t port);
+
+    shell_print("Granting access to serial port (0x3F8-0x3FF)...\n");
+    int result = ioport_grant_access(0x3F8, 0x3FF);
+
+    if (result == 0)
+    {
+        shell_print("[OK] Permission granted!\n");
+
+        // 检查权限
+        if (ioport_check_access(0x3F8))
+        {
+            shell_print("[OK] Permission check passed for 0x3F8\n");
+        }
+        else
+        {
+            shell_print("[FAIL] Permission check failed for 0x3F8\n");
+        }
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to grant permission\n");
+    }
+
+    // 测试 2: IRQ 桥接系统
+    shell_print("\n=== Test 2: IRQ Bridge System ===\n");
+
+    extern int ipc_create_port(void);
+    extern int irq_bridge_register(uint8_t irq, uint32_t ipc_port);
+
+    shell_print("Creating IPC port...\n");
+    int port = ipc_create_port();
+
+    if (port >= 0)
+    {
+        shell_print("[OK] IPC port created: ");
+        char num[16];
+        int_to_str(port, num);
+        shell_print(num);
+        shell_print("\n");
+
+        shell_print("Registering keyboard IRQ handler (IRQ 1)...\n");
+        result = irq_bridge_register(1, port);
+
+        if (result == 0)
+        {
+            shell_print("[OK] IRQ handler registered!\n");
+            shell_print("Note: IRQ messages will be sent to port ");
+            int_to_str(port, num);
+            shell_print(num);
+            shell_print(" on keyboard events\n");
+        }
+        else
+        {
+            shell_print("[FAIL] Failed to register IRQ handler\n");
+        }
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to create IPC port\n");
+    }
+
+    shell_print("\n=== Tests completed! ===\n");
+    shell_print("\nNote: These are kernel-level tests.\n");
+    shell_print("For full user-space testing, user-space drivers\n");
+    shell_print("need to be implemented.\n\n");
+}
+
 // Command: lsblk - List block devices
 static void cmd_lsblk(void)
 {
@@ -1786,8 +2128,8 @@ static void cmd_nettest(const char *args)
 
     // Get network interface
     extern struct netif *netif_get(const char *name);
-    extern int netif_send(struct netif * netif, const uint8_t * data, uint16_t length);
-    extern int netif_receive(struct netif * netif, uint8_t * buffer, uint16_t max_length);
+    extern int netif_send(struct netif * netif, const uint8_t *data, uint16_t length);
+    extern int netif_receive(struct netif * netif, uint8_t *buffer, uint16_t max_length);
 
     struct netif *netif = netif_get("eth0");
     if (!netif)
@@ -2628,6 +2970,26 @@ static void shell_execute_command(void)
     else if (strcmp(command_buffer, "drvstop") == 0)
     {
         cmd_drvstop();
+    }
+    else if (strcmp(command_buffer, "iotest") == 0)
+    {
+        cmd_iotest();
+    }
+    else if (strcmp(command_buffer, "atadrv") == 0)
+    {
+        cmd_atadrv();
+    }
+    else if (strcmp(command_buffer, "netdrv") == 0)
+    {
+        cmd_netdrv();
+    }
+    else if (strcmp(command_buffer, "blktest") == 0)
+    {
+        cmd_blktest();
+    }
+    else if (strcmp(command_buffer, "net2ktest") == 0)
+    {
+        cmd_net2ktest();
     }
     else if (strcmp(command_buffer, "lsblk") == 0)
     {

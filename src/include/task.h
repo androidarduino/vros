@@ -64,6 +64,9 @@ struct task
     struct task *child;   // First child process
     struct task *sibling; // Next sibling process
     int exit_code;        // Exit code (for zombies)
+
+    // I/O Permission Bitmap (for user-space drivers)
+    uint8_t *iopb; // I/O Permission Bitmap (8192 bytes)
 };
 
 // Function declarations
@@ -72,6 +75,7 @@ uint32_t task_create(const char *name, void (*entry_point)(void));
 void task_switch(struct registers_state *old_regs, struct registers_state *new_regs);
 void task_schedule(void);
 struct task *task_get_current(void);
+struct task *get_current_task(void); // Alias for task_get_current
 void task_yield(void);
 
 // Priority management

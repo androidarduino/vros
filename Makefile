@@ -38,6 +38,8 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(KERNEL_DIR)/syscall.c \
           $(KERNEL_DIR)/task.c \
           $(KERNEL_DIR)/ipc.c \
+          $(KERNEL_DIR)/ioport.c \
+          $(KERNEL_DIR)/irq_bridge.c \
           $(MM_DIR)/pmm.c \
           $(MM_DIR)/paging.c \
           $(MM_DIR)/kmalloc.c \
@@ -54,13 +56,18 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(DRIVERS_DIR)/ata_blk.c \
           $(DRIVERS_DIR)/ne2000.c \
           $(DRIVERS_DIR)/netif.c \
+          $(DRIVERS_DIR)/blkdev_ipc_client.c \
+          $(DRIVERS_DIR)/netdev_ipc_client.c \
           $(LIB_DIR)/shell.c \
           $(LIB_DIR)/usermode.c \
           $(LIB_DIR)/user_prog.c \
           $(LIB_DIR)/test_prog.c \
           $(LIB_DIR)/sched_test.c \
           $(LIB_DIR)/ipc_test.c \
-          $(LIB_DIR)/userspace_driver.c
+          $(LIB_DIR)/userspace_driver.c \
+          $(LIB_DIR)/ioport_test.c \
+          $(LIB_DIR)/ata_driver.c \
+          $(LIB_DIR)/ne2000_driver.c
 
 # Object files (in build directory)
 OBJS_ASM := $(patsubst $(SRC_DIR)/%.s,$(BUILD_DIR)/%.o,$(SRCS_ASM))

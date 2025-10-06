@@ -4,6 +4,8 @@
 #include "isr.h"
 #include "exec.h"
 #include "ipc.h"
+#include "ioport.h"
+#include "irq_bridge.h"
 
 // External assembly syscall handler
 extern void syscall_asm_handler(void);
@@ -180,7 +182,25 @@ void syscall_init(void)
     syscall_table[SYS_IPC_RECV] = (syscall_handler_t)sys_ipc_recv;
     syscall_table[SYS_IPC_TRY_RECV] = (syscall_handler_t)sys_ipc_try_recv;
     syscall_table[SYS_IPC_FIND_PORT] = (syscall_handler_t)sys_ipc_find_port;
+    syscall_table[SYS_REQUEST_IO_PORT] = (syscall_handler_t)sys_request_io_port;
+    syscall_table[SYS_REGISTER_IRQ_HANDLER] = (syscall_handler_t)sys_register_irq_handler;
 
     // Register INT 0x80 in IDT (0xEE = present, ring 3, 32-bit trap gate)
     idt_set_gate(0x80, (uint32_t)syscall_asm_handler, 0x08, 0xEE);
+}
+
+// Syscall: request_io_port - 请求 I/O 端口访问权限
+int sys_request_io_port(uint16_t port_start, uint16_t port_end)
+{
+    // 只有特权进程才能请求 I/O 端口访问
+    // 这里简单起见，允许所有用户进程请求
+    // 在生产系统中，应该有更严格的权限检查
+
+    return ioport_grant_access(port_start, port_end);
+}
+
+// Syscall: register_irq_handler - 注册 IRQ 处理器
+int sys_register_irq_handler(uint8_t irq, uint32_t ipc_port)
+{
+    return irq_bridge_register(irq, ipc_port);
 }

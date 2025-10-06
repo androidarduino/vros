@@ -9,6 +9,7 @@
 struct ipc_message
 {
     uint32_t sender_pid;         // Sender process ID
+    uint32_t sender_port;        // Sender port ID (for replies)
     uint32_t type;               // Message type (user-defined)
     uint32_t size;               // Data size in bytes
     char data[IPC_MSG_MAX_SIZE]; // Message data
@@ -46,6 +47,7 @@ int ipc_create_port(void);                   // Create a new port, returns port_
 int ipc_create_named_port(const char *name); // Create a named port
 int ipc_destroy_port(uint32_t port_id);      // Destroy a port
 int ipc_send(uint32_t dest_port, uint32_t type, const void *data, uint32_t size);
+int ipc_send_from_port(uint32_t src_port, uint32_t dest_port, uint32_t type, const void *data, uint32_t size);
 int ipc_recv(uint32_t port_id, struct ipc_message *msg);     // Blocking receive
 int ipc_try_recv(uint32_t port_id, struct ipc_message *msg); // Non-blocking receive
 int ipc_find_port(const char *name);                         // Find port by name

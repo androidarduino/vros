@@ -201,6 +201,61 @@ int ipc_send(uint32_t dest_port, uint32_t type, const void *data, uint32_t size)
     // Add message to queue
     struct ipc_message *msg = &port->queue[port->queue_tail];
     msg->sender_pid = current->pid;
+    msg->sender_port = 0; // No reply port specified
+    msg->type = type;
+    msg->size = size;
+
+    // Copy data
+    if (data && size > 0)
+    {
+        for (uint32_t i = 0; i < size && i < IPC_MSG_MAX_SIZE; i++)
+        {
+            msg->data[i] = ((const char *)data)[i];
+        }
+    }
+
+    // Update queue
+    port->queue_tail = (port->queue_tail + 1) % IPC_PORT_QUEUE_SIZE;
+    port->queue_count++;
+    port->total_sent++;
+    total_messages_sent++;
+
+    // Wake up waiting task if any
+    if (port->waiting_task)
+    {
+        port->waiting_task->state = TASK_READY;
+        port->waiting_task = NULL;
+    }
+
+    return 0; // Success
+}
+
+// Send message from a specific port (for replies)
+int ipc_send_from_port(uint32_t src_port, uint32_t dest_port, uint32_t type, const void *data, uint32_t size)
+{
+    if (dest_port >= IPC_MAX_PORTS)
+        return -1;
+
+    struct ipc_port *port = &ports[dest_port];
+    if (!port->in_use)
+        return -1;
+
+    if (size > IPC_MSG_MAX_SIZE)
+        return -1;
+
+    // Check if queue is full
+    if (port->queue_count >= IPC_PORT_QUEUE_SIZE)
+    {
+        port->drops++;
+        return -1; // Queue full
+    }
+
+    struct task *current = task_get_current();
+
+    // Add message to queue
+    struct ipc_message *msg = &port->queue[port->queue_tail];
+    msg->sender_pid = current->pid;
+    msg->sender_port = src_port; // Include reply port for responses
     msg->type = type;
     msg->size = size;
 
@@ -259,6 +314,7 @@ int ipc_recv(uint32_t port_id, struct ipc_message *msg)
 
     // Copy to user buffer
     msg->sender_pid = queued_msg->sender_pid;
+    msg->sender_port = queued_msg->sender_port;
     msg->type = queued_msg->type;
     msg->size = queued_msg->size;
 
@@ -297,6 +353,7 @@ int ipc_try_recv(uint32_t port_id, struct ipc_message *msg)
 
     // Copy to user buffer
     msg->sender_pid = queued_msg->sender_pid;
+    msg->sender_port = queued_msg->sender_port;
     msg->type = queued_msg->type;
     msg->size = queued_msg->size;
 

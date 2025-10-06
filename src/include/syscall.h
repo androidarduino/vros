@@ -19,6 +19,8 @@
 #define SYS_IPC_CREATE_NAMED_PORT 12
 #define SYS_IPC_FIND_PORT 13
 #define SYS_IPC_TRY_RECV 14
+#define SYS_REQUEST_IO_PORT 15
+#define SYS_REGISTER_IRQ_HANDLER 16
 
 // Maximum number of system calls
 #define SYSCALL_MAX 256
@@ -47,5 +49,7 @@ int sys_ipc_send(uint32_t dest_port, uint32_t type, const void *data, uint32_t s
 int sys_ipc_recv(uint32_t port_id, void *msg);
 int sys_ipc_try_recv(uint32_t port_id, void *msg);
 int sys_ipc_find_port(const char *name);
+int sys_request_io_port(uint16_t port_start, uint16_t port_end);
+int sys_register_irq_handler(uint8_t irq, uint32_t ipc_port);
 
 #endif // SYSCALL_H

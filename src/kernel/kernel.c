@@ -24,6 +24,8 @@
 #include "mount.h"
 #include "ne2000.h"
 #include "netif.h"
+#include "ioport.h"
+#include "irq_bridge.h"
 
 // VGA text mode buffer address
 volatile char *vga_buffer = (volatile char *)0xB8000;
@@ -128,40 +130,48 @@ void kernel_main(void)
     ipc_init();
     print_string("IPC ready!", 19);
 
+    // Initialize I/O port permissions
+    print_string("Initializing I/O permissions...", 20);
+    ioport_init();
+
+    // Initialize IRQ bridge
+    irq_bridge_init();
+    print_string("I/O & IRQ bridge ready!", 21);
+
     // Initialize system calls
-    print_string("Initializing system calls...", 18);
+    print_string("Initializing system calls...", 22);
     syscall_init();
-    print_string("System calls enabled!", 19);
+    print_string("System calls enabled!", 23);
 
     // Initialize VFS
-    print_string("Initializing VFS...", 20);
+    print_string("Initializing VFS...", 24);
     vfs_init();
     ramfs_init();
     ramfs_mount_root();
-    print_string("VFS initialized!", 21);
+    print_string("VFS initialized!", 25);
 
     // Create some test files
     ramfs_create_file("/hello.txt", "Hello, World!\n");
     ramfs_create_file("/test.txt", "This is a test file.\n");
 
     // Mount procfs
-    print_string("Mounting procfs...", 22);
+    print_string("Mounting procfs...", 26);
     procfs_init();
     procfs_mount();
-    print_string("procfs mounted at /proc!", 23);
+    print_string("procfs mounted at /proc!", 27);
 
     // Mount devfs
-    print_string("Mounting devfs...", 24);
+    print_string("Mounting devfs...", 28);
     devfs_init();
     devfs_mount();
-    print_string("devfs mounted at /dev!", 25);
+    print_string("devfs mounted at /dev!", 29);
 
     // Initialize storage subsystem
-    print_string("Initializing storage...", 26);
+    print_string("Initializing storage...", 30);
     blkdev_init();
     mount_init();
 
-    print_string("Probing ATA devices...", 27);
+    print_string("Probing ATA devices...", 31);
     ata_init();
 
     // Register ATA devices as block devices
@@ -210,8 +220,24 @@ void kernel_main(void)
 
     print_string("Storage subsystem ready!", 33);
 
+    // Initialize block device IPC client
+    print_string("Initializing block device IPC client...", 34);
+    extern int blkdev_ipc_client_init(void);
+    if (blkdev_ipc_client_init() == 0)
+    {
+        print_string("Block device IPC client ready!", 35);
+    }
+    else
+    {
+        print_string("Block device IPC client init failed", 35);
+    }
+
+    // Initialize network device IPC client
+    extern int netdev_ipc_client_init(void);
+    netdev_ipc_client_init();
+
     // Initialize network subsystem
-    print_string("Initializing network...", 34);
+    print_string("Initializing network...", 36);
     netif_init();
 
     // Initialize NE2000 network card
@@ -220,18 +246,18 @@ void kernel_main(void)
         // Register NE2000 as network interface
         extern struct netif_ops ne2000_ops;
         netif_register("eth0", &ne2000_ops, 0);
-        print_string("NE2000 network card ready!", 35);
+        print_string("NE2000 network card ready!", 37);
     }
     else
     {
-        print_string("NE2000 not found", 35);
+        print_string("NE2000 not found", 37);
     }
 
     // Initialize usermode support
     usermode_init();
 
     // Create test programs and directories
-    print_string("Creating test programs...", 36);
+    print_string("Creating test programs...", 38);
     extern void create_test_programs(void);
     create_test_programs();
 
