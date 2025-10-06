@@ -40,6 +40,7 @@ SRCS_C := $(KERNEL_DIR)/kernel.c \
           $(KERNEL_DIR)/ipc.c \
           $(KERNEL_DIR)/ioport.c \
           $(KERNEL_DIR)/irq_bridge.c \
+          $(KERNEL_DIR)/driver_config.c \
           $(MM_DIR)/pmm.c \
           $(MM_DIR)/paging.c \
           $(MM_DIR)/kmalloc.c \

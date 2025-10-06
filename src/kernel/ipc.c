@@ -73,6 +73,8 @@ int ipc_create_named_port(const char *name)
         return -1;
 
     struct task *current = task_get_current();
+    if (!current)
+        return -1;
 
     // Check if name already exists
     for (int i = 0; i < IPC_MAX_PORTS; i++)

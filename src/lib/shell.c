@@ -1761,16 +1761,6 @@ static void cmd_net2ktest(void)
 
     // 检查驱动是否可用
     shell_print("Checking if driver is available...\n");
-    
-    extern int ipc_find_port(const char *name);
-    int port_id = ipc_find_port("netdev.ne2000");
-    
-    shell_print("Debug: ipc_find_port returned: ");
-    char port_str[16];
-    int_to_str(port_id, port_str);
-    shell_print(port_str);
-    shell_print("\n");
-    
     if (!netdev_ipc_driver_available())
     {
         shell_print("[FAIL] NE2000 driver is not running!\n");

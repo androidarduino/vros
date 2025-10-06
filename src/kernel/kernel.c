@@ -269,6 +269,10 @@ void kernel_main(void)
 
     print_string("Test programs created!", 37);
 
+    // Start user-space drivers (based on driver_config.c)
+    extern void driver_config_init(void);
+    driver_config_init();
+
     print_string("Starting shell...", 38);
 
     // Wait a moment

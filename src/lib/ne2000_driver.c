@@ -58,9 +58,13 @@
 
 // 系统调用号
 #define SYS_WRITE 1
-#define SYS_IPC_CREATE_NAMED_PORT 11
-#define SYS_IPC_SEND 12
-#define SYS_IPC_RECV 13
+#define SYS_YIELD 4
+#define SYS_IPC_CREATE_PORT 9
+#define SYS_IPC_SEND 10
+#define SYS_IPC_RECV 11
+#define SYS_IPC_CREATE_NAMED_PORT 12
+#define SYS_IPC_FIND_PORT 13
+#define SYS_IPC_TRY_RECV 14
 #define SYS_REQUEST_IO_PORT 15
 #define SYS_REGISTER_IRQ_HANDLER 16
 
@@ -105,13 +109,13 @@ static inline int syscall_ipc_recv(uint32_t port, struct ipc_message_user *msg)
     return ret;
 }
 
-static inline int syscall_ipc_send(uint32_t src_port, uint32_t dst_port, const void *msg, uint32_t size)
+static inline int syscall_ipc_send(uint32_t dest_port, uint32_t type, const void *data, uint32_t size)
 {
     int ret;
     __asm__ volatile(
         "int $0x80"
         : "=a"(ret)
-        : "a"(SYS_IPC_SEND), "b"(src_port), "c"(dst_port), "d"(msg), "S"(size));
+        : "a"(SYS_IPC_SEND), "b"(dest_port), "c"(type), "d"(data), "S"(size));
     return ret;
 }
 
@@ -128,13 +132,7 @@ static inline void outb(uint16_t port, uint8_t val)
     __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-// 全局变量
-static uint8_t mac_addr[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
-static uint8_t rx_page_start = 0x46;
-static uint8_t rx_page_stop = 0x80;
-static uint8_t next_packet = 0x46;
-
-// 简单的 memcpy
+// memcpy 辅助函数
 static void *memcpy(void *dest, const void *src, uint32_t n)
 {
     uint8_t *d = (uint8_t *)dest;
@@ -143,6 +141,12 @@ static void *memcpy(void *dest, const void *src, uint32_t n)
         d[i] = s[i];
     return dest;
 }
+
+// 全局变量
+static uint8_t mac_addr[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
+static uint8_t rx_page_start = 0x46;
+static uint8_t rx_page_stop = 0x80;
+static uint8_t next_packet = 0x46;
 
 // 初始化 NE2000（简化版，仅读取 MAC 地址）
 static int ne2000_init(void)
@@ -250,7 +254,7 @@ static int ne2000_recv(uint8_t *buffer, uint32_t max_length)
 }
 
 // 处理网络设备请求
-static void handle_request(struct ipc_message_user *msg, uint32_t my_port)
+static void handle_request(struct ipc_message_user *msg)
 {
     if (msg->size < sizeof(netdev_request_t))
     {
@@ -313,7 +317,8 @@ static void handle_request(struct ipc_message_user *msg, uint32_t my_port)
     }
 
     // 发送响应
-    syscall_ipc_send(my_port, msg->sender_port, &resp, sizeof(resp));
+    // 参数: dest_port, type, data, size
+    syscall_ipc_send(msg->sender_port, 0, &resp, sizeof(resp));
 }
 
 // 系统调用：yield
@@ -327,10 +332,10 @@ void ne2000_driver_main(void)
 {
     // 创建命名 IPC 端口
     int port = syscall_ipc_create_named_port(NETDEV_PORT_NAME);
+
     if (port < 0)
     {
-        // 端口创建失败，让出 CPU 后退出
-        // 使用 yield 而不是 hlt
+        // 端口创建失败，让出 CPU
         while (1)
         {
             syscall_yield();
@@ -350,6 +355,6 @@ void ne2000_driver_main(void)
         }
 
         // 处理请求并发送响应
-        handle_request(&msg, port);
+        handle_request(&msg);
     }
 }
