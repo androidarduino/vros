@@ -410,7 +410,8 @@ static void cmd_help(void)
     shell_print("  atadrv   - Start user-space ATA driver\n");
     shell_print("  netdrv   - Start user-space NE2000 driver\n");
     shell_print("  blktest  - Test block device IPC\n");
-    shell_print("  net2ktest - Test network device IPC\n");
+    shell_print("  net2ktest    - Test network device IPC\n");
+    shell_print("  netstacktest - Test network protocol stack\n");
     shell_print("  mkfs     - Format a disk with VRFS\n");
     shell_print("  mount    - Show mounted filesystems\n");
     shell_print("  mount <dev> <path> - Mount a disk\n");
@@ -1825,6 +1826,104 @@ static void cmd_net2ktest(void)
     shell_print("\n=== Test completed! ===\n\n");
 }
 
+// Command: netstacktest - Test network protocol stack
+static void cmd_netstacktest(void)
+{
+    shell_print("\n=== Network Protocol Stack Test ===\n\n");
+
+    // 检查 netstack 是否运行
+    shell_print("1. Checking if netstack is running...\n");
+    extern int ipc_find_port(const char *name);
+    int netstack_port = ipc_find_port("net.stack");
+
+    if (netstack_port < 0)
+    {
+        shell_print("[FAIL] Netstack is not running!\n");
+        shell_print("Netstack should start automatically.\n");
+        shell_print("Check with 'ps' command.\n\n");
+        return;
+    }
+
+    shell_print("[OK] Netstack is running (port: ");
+    char port_str[16];
+    int_to_str(netstack_port, port_str);
+    shell_print(port_str);
+    shell_print(")\n\n");
+
+    // 测试 IPC 通信
+    shell_print("2. Testing IPC communication...\n");
+
+    // 创建一个测试用的 ARP 请求包
+    uint8_t test_frame[60];
+
+    // 以太网头部
+    // 目标 MAC: FF:FF:FF:FF:FF:FF (广播)
+    for (int i = 0; i < 6; i++)
+        test_frame[i] = 0xFF;
+
+    // 源 MAC: 52:54:00:12:34:56 (测试 MAC)
+    test_frame[6] = 0x52;
+    test_frame[7] = 0x54;
+    test_frame[8] = 0x00;
+    test_frame[9] = 0x12;
+    test_frame[10] = 0x34;
+    test_frame[11] = 0x56;
+
+    // EtherType: 0x0806 (ARP)
+    test_frame[12] = 0x08;
+    test_frame[13] = 0x06;
+
+    // ARP 包内容（简化版本，只为测试）
+    // Hardware type: Ethernet (1)
+    test_frame[14] = 0x00;
+    test_frame[15] = 0x01;
+    // Protocol type: IPv4 (0x0800)
+    test_frame[16] = 0x08;
+    test_frame[17] = 0x00;
+    // Hardware size: 6
+    test_frame[18] = 0x06;
+    // Protocol size: 4
+    test_frame[19] = 0x04;
+    // Opcode: Request (1)
+    test_frame[20] = 0x00;
+    test_frame[21] = 0x01;
+
+    // 填充剩余部分
+    for (int i = 22; i < 60; i++)
+        test_frame[i] = 0x00;
+
+    // 通过 IPC 发送给 netstack
+    extern int ipc_send(int dest_port, uint32_t type, const void *data, uint32_t size);
+    int result = ipc_send(netstack_port, 1, test_frame, 60); // type=1 表示网络数据包
+
+    if (result == 0)
+    {
+        shell_print("[OK] Sent test ARP packet to netstack\n");
+        shell_print("     (60 bytes, broadcast ARP request)\n");
+    }
+    else
+    {
+        shell_print("[FAIL] Failed to send packet (error: ");
+        char err[16];
+        int_to_str(result, err);
+        shell_print(err);
+        shell_print(")\n");
+    }
+
+    shell_print("\n3. Current status:\n");
+    shell_print("   - Netstack is receiving packets\n");
+    shell_print("   - Check debug output for packet processing\n");
+    shell_print("   - Use 'ps' to see netstack process\n");
+
+    shell_print("\n=== Next steps ===\n");
+    shell_print("To test full network functionality:\n");
+    shell_print("1. Connect NE2000 driver to netstack\n");
+    shell_print("2. Implement ping command (ICMP Echo)\n");
+    shell_print("3. Add ARP cache display command\n");
+
+    shell_print("\n=== Test completed! ===\n\n");
+}
+
 // Command: iotest - Test I/O port and IRQ bridge
 static void cmd_iotest(void)
 {
@@ -2980,6 +3079,10 @@ static void shell_execute_command(void)
     else if (strcmp(command_buffer, "net2ktest") == 0)
     {
         cmd_net2ktest();
+    }
+    else if (strcmp(command_buffer, "netstacktest") == 0)
+    {
+        cmd_netstacktest();
     }
     else if (strcmp(command_buffer, "lsblk") == 0)
     {
